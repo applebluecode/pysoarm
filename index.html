@@ -923,10 +923,11 @@ robot arm: six Feetech <strong>STS3215</strong> serial-bus servos on a single 1 
 stack. The ergonomics follow <code>pylibfranka</code> / <code>pyAgxArm</code> (<code>connect()</code> → <code>read_once()</code> →
 <code>write_goal()</code> / control loop) within what position-servo hardware can actually do.</p>
 <div class="admonition note">
-<p class="admonition-title">Pre-release (0.1.0-dev)</p>
-<p>Transport, calibration, safety, trajectories, <code>SOArm</code> and the CLI are implemented. The
-faster <code>rustypot</code> backend, Cartesian kinematics and a ROS adapter remain on the roadmap
-(<code>CHANGELOG.md</code>).</p>
+<p class="admonition-title">Version 0.1.0</p>
+<p>Transport (<code>scs</code> and the optional <code>rustypot</code> backend), calibration, safety, trajectories,
+Cartesian kinematics, <code>SOArm</code>, the <code>ArmBridge</code>/ROS 2 adapter and the CLI are implemented.
+What is <em>not</em> here is by design: teleoperation, dataset recording and policies
+(<a href="adr/0001-scope-device-layer/">ADR 0001</a>). See <code>CHANGELOG.md</code> for the full list.</p>
 </div>
 <h2 id="design-targets">Design targets<a class="headerlink" href="#design-targets" title="Permanent link">&para;</a></h2>
 <table>
