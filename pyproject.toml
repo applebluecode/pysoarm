@@ -52,7 +52,7 @@ pysoarm = "pysoarm.cli.main:main"
 
 [project.urls]
 Homepage = "https://github.com/applebluecode/pysoarm"
-Documentation = "https://github.com/applebluecode/pysoarm#readme"
+Documentation = "https://applebluecode.github.io/pysoarm/"
 Repository = "https://github.com/applebluecode/pysoarm"
 Issues = "https://github.com/applebluecode/pysoarm/issues"
 Changelog = "https://github.com/applebluecode/pysoarm/blob/main/CHANGELOG.md"
