@@ -3,7 +3,7 @@ title: pysoarm
 message: If you use this software, please cite it as below.
 type: software
 license: Apache-2.0
-repository-code: https://github.com/USER/pysoarm
+repository-code: https://github.com/applebluecode/pysoarm
 abstract: >-
   Lean, hardware-level Python API for SO-100/SO-101 robot arms built on Feetech
   STS3215 serial-bus servos.
@@ -14,5 +14,6 @@ keywords:
   - serial bus
 authors:
   - name: pysoarm contributors
+    email: noreply@pysoarm.invalid
 version: 0.1.0
 date-released: 2026-11-02
