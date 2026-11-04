@@ -29,7 +29,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          version="$(uv run python -c 'import tomllib,pathlib;print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+          # `uv version --short` reads pyproject.toml directly: the project venv is 3.10
+          # (.python-version), so `tomllib` - added in 3.11 - is not available here.
+          version="$(uv version --short)"
           test "$tag" = "$version" || { echo "tag $tag != pyproject version $version"; exit 1; }
       - uses: actions/upload-artifact@v4
         with:
