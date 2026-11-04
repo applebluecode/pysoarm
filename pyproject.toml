@@ -106,7 +106,16 @@ package = true
 packages = ["src/pysoarm"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/src", "/tests", "/examples", "/docs", "/CHANGELOG.md", "/README.md", "/LICENSE"]
+include = [
+  "/src",
+  "/tests",
+  "/examples",
+  "/docs",
+  "/ros2",
+  "/CHANGELOG.md",
+  "/README.md",
+  "/LICENSE",
+]
 
 # --------------------------------------------------------------------------- #
 # Linting / formatting
@@ -114,7 +123,7 @@ include = ["/src", "/tests", "/examples", "/docs", "/CHANGELOG.md", "/README.md"
 [tool.ruff]
 line-length = 100
 target-version = "py310"
-src = ["src", "tests", "examples"]
+src = ["src", "tests", "examples", "ros2"]
 extend-exclude = ["docs", "build", "dist"]
 
 [tool.ruff.lint]
@@ -148,6 +157,7 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D", "ARG", "PLR2004"]
+"ros2/**" = ["D", "PLC0415"]
 "examples/**" = ["D", "T201"]
 "scripts/**" = ["D", "T201"]
 

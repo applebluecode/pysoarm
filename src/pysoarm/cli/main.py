@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import importlib
 import json
 import os
 import shutil
@@ -23,14 +24,16 @@ import stat
 import subprocess
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import cast
 
 from pysoarm._version import __version__
 from pysoarm.arm import SOArm
 from pysoarm.bus import BACKENDS, make_bus
 from pysoarm.bus.base import Bus
-from pysoarm.exceptions import PysoarmError
+from pysoarm.exceptions import ConfigurationError, PysoarmError
+from pysoarm.kinematics.base import Kinematics, Pose
 from pysoarm.models.base import get_model
 
 __all__ = ["EXIT_ERROR", "EXIT_OK", "EXIT_USAGE", "build_parser", "main"]
@@ -85,6 +88,38 @@ def build_parser() -> argparse.ArgumentParser:
     add_common(hold, needs_calibration=True)
     hold.add_argument("--yes", action="store_true", help="confirm that torque will be enabled")
 
+    pose = sub.add_parser("pose", help="end-effector pose for a joint configuration or the arm")
+    pose.add_argument("--urdf", required=True, help="URDF of the arm (not shipped)")
+    pose.add_argument("--target-frame", default="tool0", help="end-effector frame (default: tool0)")
+    pose.add_argument("--q", default=None, help="joint values in degrees, e.g. '0,-30,60,0,90,0'")
+    pose.add_argument("--port", default=None, help="read the joints from this port instead of --q")
+    pose.add_argument("--model", default="so101", help="arm model (default: so101)")
+    pose.add_argument("--backend", choices=BACKENDS, default="scs", help="transport for --port")
+    pose.add_argument("--calibration", default=None, help="calibration JSON for --port")
+    pose.add_argument("--json", action="store_true", help="machine-readable output")
+
+    ik = sub.add_parser("ik", help="inverse kinematics, dry run (no hardware)")
+    ik.add_argument("--urdf", required=True, help="URDF of the arm (not shipped)")
+    ik.add_argument("--target-frame", default="tool0", help="end-effector frame (default: tool0)")
+    ik.add_argument(
+        "--xyz",
+        nargs=3,
+        type=float,
+        required=True,
+        metavar=("X", "Y", "Z"),
+        help="target position in metres",
+    )
+    ik.add_argument(
+        "--rpy",
+        nargs=3,
+        type=float,
+        default=(0.0, 0.0, 0.0),
+        metavar=("R", "P", "Y"),
+        help="target orientation in degrees",
+    )
+    ik.add_argument("--seed", default=None, help="IK seed joint values in degrees")
+    ik.add_argument("--json", action="store_true", help="machine-readable output")
+
     doctor = sub.add_parser("doctor", help="diagnose the environment for a port")
     doctor.add_argument("--port", required=True, help="serial device to inspect")
 
@@ -111,6 +146,35 @@ def _make_arm(args: argparse.Namespace) -> SOArm:
         backend=args.backend,
         calibration=args.calibration,
         baudrate=args.baudrate,
+    )
+
+
+def _make_kinematics(args: argparse.Namespace) -> Kinematics:
+    """Build the Cartesian solver for ``pose``/``ik`` (monkeypatched in tests)."""
+    # lazy: the placo adapter needs numpy and the optional 'kinematics' extra
+    module = importlib.import_module("pysoarm.kinematics")
+    factory = cast("Callable[..., Kinematics]", module.PlacoKinematics)
+    return factory(args.urdf, target_frame=args.target_frame)
+
+
+def _joint_list(text: str) -> tuple[float, ...]:
+    """Parse ``"0, -30 60"`` into a tuple of floats."""
+    cleaned = text.replace(",", " ").split()
+    try:
+        return tuple(float(value) for value in cleaned)
+    except ValueError as exc:
+        raise ConfigurationError(f"Cannot parse joint values from {text!r}: {exc}") from exc
+
+
+def _make_readonly_arm(args: argparse.Namespace) -> SOArm:
+    """Arm used by ``pose --port``: no register writes, torque stays off."""
+    return SOArm(
+        args.port,
+        model=args.model,
+        backend=args.backend,
+        calibration=args.calibration,
+        configure_motors=False,
+        enable_torque=False,
     )
 
 
@@ -270,12 +334,47 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_pose(args: argparse.Namespace) -> int:
+    kinematics = _make_kinematics(args)
+    if args.q is not None:
+        q_deg = _joint_list(args.q)
+    elif args.port is not None:
+        with _make_readonly_arm(args) as arm:
+            q_deg = arm.read_once(health=False).q_deg
+    else:
+        _print_error("pass either --q or --port")
+        return EXIT_USAGE
+    pose = kinematics.forward(q_deg)
+    if args.json:
+        print(json.dumps({"joints_deg": list(q_deg), **pose.as_dict()}, indent=2))
+    else:
+        x, y, z, roll, pitch, yaw = pose.to_xyz_rpy()
+        print(f"xyz_m   {x:8.4f} {y:8.4f} {z:8.4f}")
+        print(f"rpy_deg {roll:8.2f} {pitch:8.2f} {yaw:8.2f}")
+    return EXIT_OK
+
+
+def _cmd_ik(args: argparse.Namespace) -> int:
+    kinematics = _make_kinematics(args)
+    roll, pitch, yaw = args.rpy
+    target = Pose.from_xyz_rpy(*args.xyz, roll=roll, pitch=pitch, yaw=yaw)
+    seed = _joint_list(args.seed) if args.seed else None
+    solution = kinematics.inverse(target, seed_deg=seed)
+    if args.json:
+        print(json.dumps({"joints_deg": list(solution)}, indent=2))
+    else:
+        print(" ".join(f"{value:8.2f}" for value in solution))
+    return EXIT_OK
+
+
 _HANDLERS = {
     "scan": _cmd_scan,
     "read": _cmd_read,
     "monitor": _cmd_monitor,
     "hold": _cmd_hold,
     "doctor": _cmd_doctor,
+    "pose": _cmd_pose,
+    "ik": _cmd_ik,
 }
 
 

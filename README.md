@@ -109,8 +109,36 @@ src/pysoarm/          # the importable package (src layout)
 tests/                # unit tests (hardware tests are opt-in)
 examples/             # runnable examples
 docs/                 # mkdocs site + docs/adr/ (scope and other decisions)
+ros2/                 # separate ament_python package: pysoarm_ros2 node
 .github/workflows/    # CI (lint + types + tests + build) and PyPI release
 ```
+
+## ROS 2
+
+`ros2/pysoarm_ros2` is a thin rclpy node over `pysoarm.bridge.ArmBridge`: it publishes
+`joint_states` (radians), accepts `joint_commands` (radians) and exposes `enable` / `disable`
+services. It stays a separate package so the device layer keeps zero ROS dependencies.
+
+```bash
+colcon build --packages-select pysoarm_ros2
+ros2 run pysoarm_ros2 arm_node --ros-args -p port:=/dev/so101_follower -p backend:=rustypot
+```
+
+See [docs/guides/ros2.md](docs/guides/ros2.md) for parameters and safety behaviour.
+
+## Cartesian control
+
+Kinematics is optional (`pip install "pysoarm[kinematics]"`, needs your own URDF):
+
+```python
+from pysoarm.kinematics import PlacoKinematics
+
+arm = SOArm("/dev/so101_follower", kinematics=PlacoKinematics("so101.urdf"))
+print(arm.forward())                     # current end-effector pose
+arm.move_to_pose(target_pose, duration=2.0)   # IK, then a joint-space move
+```
+
+Unreachable targets raise `NotReachableError` **before** anything is written.
 
 ## Development
 

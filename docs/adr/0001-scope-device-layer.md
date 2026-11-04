@@ -76,7 +76,9 @@ Replay is supported as a *primitive*, not a format: `ResampledTrajectory` replay
 1. Teleoperation, master/slave modes, input devices.
 2. Dataset recording, video encoding, dataset schema compatibility, Hub upload.
 3. Policy inference, training, RL environments.
-4. ROS/ROS2 nodes or drivers (an adapter package may come later).
+4. ROS/ROS2 nodes or drivers *inside this package*: the adapter lives in
+   `ros2/pysoarm_ros2` (a separate ament package) and keeps all ROS-independent
+   logic in `pysoarm.bridge`, which is covered by the main test suite.
 5. Any claim of torque or impedance control on hardware that only has a position loop.
 
 ## Alternatives considered

@@ -23,6 +23,16 @@ rendered from the docstrings by mkdocstrings.
 
 ::: pysoarm.trajectory
 
+## Bridge (framework-agnostic)
+
+::: pysoarm.bridge
+
+## Kinematics
+
+::: pysoarm.kinematics.base
+
+::: pysoarm.kinematics.placo_solver
+
 ## Models
 
 ::: pysoarm.models.base

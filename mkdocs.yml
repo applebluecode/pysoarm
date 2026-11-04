@@ -64,4 +64,5 @@ nav:
       - Install: guides/install.md
       - Quickstart: guides/quickstart.md
       - Testing: guides/testing.md
+      - ROS 2: guides/ros2.md
   - API reference: reference/api.md
