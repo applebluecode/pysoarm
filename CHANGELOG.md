@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   report the same positions) and the latency budget. Retries are handled by the adapter with
   rustypot's own retry loop disabled, so both backends retry identically and an intermittent
   "Parsing error" from the Rust layer is retried instead of tripping the watchdog.
-- **Tests**: 155 unit tests (protocol-level wire emulation, fake-bus control paths, safety
+- **Tests**: 207 unit tests (protocol-level wire emulation, fake-bus control paths, safety
   tables, calibration round trips, CLI) plus 3 opt-in hardware tests, at ~90 % coverage.
 - **Measured on the reference arm**: single register read 0.36 ms, six-joint `sync_read`
   2.18 ms, six-goal `sync_write` 0.26 ms, full control step 2.71 ms → 200 Hz loop with
@@ -65,9 +65,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `uv sync --locked` + `pre-commit install`. A plain-pip path
   (`pip install --group dev -e .`) remains documented for contributors without uv.
 
-### Planned
-
-- Cartesian goals through an optional `kinematics` extra (placo + user-supplied URDF).
-- ROS 2 adapter as a separate package, if there is demand.
+- **Cartesian control** (`pysoarm/kinematics/`): a dependency-free `Pose` (metres + unit
+  quaternion, RPY helpers), the `Kinematics` protocol, and `PlacoKinematics` behind the
+  optional `kinematics` extra. `SOArm.forward()` and `SOArm.move_to_pose()` solve IK **before**
+  writing any goal, so an unreachable target raises `NotReachableError` with the residual and
+  leaves the arm untouched; the resulting joint goal still passes every safety guard.
+  Defaults are tuned from measurement: a placo task gain of `1e-3` converges in ~5 iterations
+  on the reference two-link URDF, while `1.0` overshoots into a wrong branch. The placo import
+  is lazy, so `import pysoarm` still needs neither numpy nor placo.
+- **CLI**: `pysoarm pose` (FK, from `--q` or read-only from `--port`) and `pysoarm ik`
+  (dry-run inverse kinematics), both with `--json`.
+- **`ArmBridge`** (`pysoarm/bridge.py`): framework-agnostic snapshot (`JointStateFrame`, with
+  radians for ROS), command path in degrees or radians, torque enable/disable, and a
+  staleness rule — a command based on a state older than `max_command_age_s` is refused.
+- **ROS 2 package** (`ros2/pysoarm_ros2`, separate `ament_python` package): publishes
+  `joint_states` (radians), subscribes to `joint_commands`, exposes `enable`/`disable`
+  services, and routes everything through `ArmBridge` so the guards cannot be bypassed. CI has
+  no ROS installation: the node is syntax-checked only and its tests skip without `rclpy`, while
+  all ROS-independent logic is covered by the main suite. The node itself is covered by
+  `tests/test_ros2_node.py`, which loads it against stub `rclpy`/message modules and checks
+  parameter declarations, endpoints, degree→radian conversion, command routing, stale-command
+  rejection, the torque services and torque release on shutdown.
 
 [Unreleased]: https://github.com/USER/pysoarm/compare/main...HEAD

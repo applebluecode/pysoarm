@@ -12,6 +12,8 @@ import pysoarm.cli.main as cli_main
 from pysoarm.arm import SOArm
 from pysoarm.bus.fake import FakeBus
 from pysoarm.cli.main import EXIT_ERROR, EXIT_USAGE, build_parser, main
+from pysoarm.exceptions import ConfigurationError
+from pysoarm.kinematics import Pose
 
 
 def test_parser_exposes_every_command() -> None:
@@ -20,7 +22,15 @@ def test_parser_exposes_every_command() -> None:
         action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
     ]
     assert len(subparsers) == 1
-    assert set(subparsers[0].choices) == {"scan", "read", "monitor", "hold", "doctor"}
+    assert set(subparsers[0].choices) == {
+        "scan",
+        "read",
+        "monitor",
+        "hold",
+        "doctor",
+        "pose",
+        "ik",
+    }
 
 
 def test_missing_command_is_a_usage_error() -> None:
@@ -171,3 +181,107 @@ def test_version_string_includes_the_number(capsys: pytest.CaptureFixture[str]) 
         main(["--version"])
     assert excinfo.value.code == 0
     assert capsys.readouterr().out.startswith("pysoarm ")
+
+
+# --------------------------------------------------------------------------- #
+# Cartesian sub-commands (kinematics stubbed: no URDF in the test)
+# --------------------------------------------------------------------------- #
+class StubKinematics:
+    """Fixed pose / solution, so the CLI wiring can be tested without a URDF."""
+
+    def __init__(self) -> None:
+        self.pose = Pose.from_xyz_rpy(0.2, 0.1, 0.05)
+        self.forward_calls: list[tuple[float, ...]] = []
+
+    @property
+    def joint_names(self) -> tuple[str, ...]:
+        return ("j1", "j2")
+
+    def forward(self, q_deg: object) -> object:
+        self.forward_calls.append(tuple(q_deg))  # type: ignore[arg-type]
+        return self.pose
+
+    def inverse(self, pose: object, **kwargs: object) -> tuple[float, ...]:
+        del pose, kwargs
+        return (10.0, 20.0)
+
+
+def test_joint_list_parses_commas_and_spaces() -> None:
+    assert cli_main._joint_list("0, -30 60") == (0.0, -30.0, 60.0)
+    with pytest.raises(ConfigurationError, match="Cannot parse joint values"):
+        cli_main._joint_list("0, oops")
+
+
+def test_pose_with_explicit_joints(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stub = StubKinematics()
+    monkeypatch.setattr(cli_main, "_make_kinematics", lambda args: stub)
+    assert main(["pose", "--urdf", "arm.urdf", "--q", "0,0", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["joints_deg"] == [0.0, 0.0]
+    assert payload["xyz_m"] == pytest.approx([0.2, 0.1, 0.05])
+    assert stub.forward_calls == [(0.0, 0.0)]
+
+
+def test_pose_human_readable_output(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli_main, "_make_kinematics", lambda args: StubKinematics())
+    assert main(["pose", "--urdf", "arm.urdf", "--q", "0,0"]) == 0
+    out = capsys.readouterr().out
+    assert "xyz_m" in out
+    assert "rpy_deg" in out
+
+
+def test_pose_needs_joints_or_a_port(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli_main, "_make_kinematics", lambda args: StubKinematics())
+    assert main(["pose", "--urdf", "arm.urdf"]) == EXIT_USAGE
+    assert "--q or --port" in capsys.readouterr().err
+
+
+def test_pose_can_read_the_arm(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stub = StubKinematics()
+    monkeypatch.setattr(cli_main, "_make_kinematics", lambda args: stub)
+    bus = ready_bus()
+    monkeypatch.setattr(cli_main, "_make_readonly_arm", lambda args: SOArm(bus=bus))
+    assert main(["pose", "--urdf", "arm.urdf", "--port", "/dev/fake", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert len(payload["joints_deg"]) == 6
+    assert payload["xyz_m"] == pytest.approx([0.2, 0.1, 0.05])
+
+
+def test_ik_prints_the_solution(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli_main, "_make_kinematics", lambda args: StubKinematics())
+    assert main(["ik", "--urdf", "arm.urdf", "--xyz", "0.5", "0.5", "0.0", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["joints_deg"] == [10.0, 20.0]
+
+
+def test_ik_accepts_orientation_and_seed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli_main, "_make_kinematics", lambda args: StubKinematics())
+    args = [
+        "ik",
+        "--urdf",
+        "arm.urdf",
+        "--xyz",
+        "0.5",
+        "0.5",
+        "0.0",
+        "--rpy",
+        "0",
+        "0",
+        "90",
+        "--seed",
+        "1,2",
+    ]
+    assert main(args) == 0
+    assert capsys.readouterr().out.strip() == "10.00    20.00"

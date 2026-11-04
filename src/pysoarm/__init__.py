@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from pysoarm._version import __version__
 from pysoarm.arm import LoopStats, SOArm
+from pysoarm.bridge import ArmBridge, JointStateFrame
 from pysoarm.bus import Backend, make_bus
 from pysoarm.bus.base import Bus
 from pysoarm.bus.fake import FakeBus
@@ -34,10 +35,13 @@ from pysoarm.exceptions import (
     CalibrationError,
     CommunicationError,
     ConfigurationError,
+    KinematicsError,
+    NotReachableError,
     PysoarmError,
     SafetyViolation,
     WatchdogTimeout,
 )
+from pysoarm.kinematics.base import Kinematics, Pose
 from pysoarm.models import MODELS, SO100, SO101, RobotModel, get_model
 from pysoarm.safety import SafetyLimits, SafetyReport, apply_guards
 from pysoarm.state import ArmState
@@ -50,6 +54,7 @@ __all__ = [
     "REGISTERS",
     "SO100",
     "SO101",
+    "ArmBridge",
     "ArmState",
     "Backend",
     "Bus",
@@ -60,9 +65,14 @@ __all__ = [
     "ConfigurationError",
     "FakeBus",
     "JointCalibration",
+    "JointStateFrame",
+    "Kinematics",
+    "KinematicsError",
     "LinearRamp",
     "LoopStats",
     "MinimumJerk",
+    "NotReachableError",
+    "Pose",
     "PysoarmError",
     "Register",
     "RegisterKind",

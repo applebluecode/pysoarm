@@ -16,6 +16,8 @@ __all__ = [
     "CalibrationError",
     "CommunicationError",
     "ConfigurationError",
+    "KinematicsError",
+    "NotReachableError",
     "PysoarmError",
     "SafetyViolation",
     "WatchdogTimeout",
@@ -64,6 +66,18 @@ class CalibrationError(PysoarmError):
     """Calibration is inconsistent or does not match the arm model.
 
     Raised before any motor is commanded, so the arm state is unchanged.
+    """
+
+
+class KinematicsError(PysoarmError):
+    """Kinematics could not be set up or evaluated (missing URDF, bad joint list, ...)."""
+
+
+class NotReachableError(KinematicsError):
+    """Inverse kinematics did not converge to the requested pose.
+
+    Raised *before* any goal is written, so the arm keeps its current target. The residual
+    distance is included in the message.
     """
 
 

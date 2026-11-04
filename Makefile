@@ -4,7 +4,7 @@
 # environment is reproducible; the package itself stays pip-installable from pyproject.toml.
 UV ?= uv
 SRC := src/pysoarm
-RUFF_TARGETS := $(SRC) tests examples
+RUFF_TARGETS := $(SRC) tests examples ros2
 
 .PHONY: help
 help: ## Show this help

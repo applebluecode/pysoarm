@@ -54,6 +54,7 @@ from pysoarm.exceptions import (
     ConfigurationError,
     WatchdogTimeout,
 )
+from pysoarm.kinematics.base import Kinematics, Pose
 from pysoarm.models.base import RobotModel, get_model
 from pysoarm.safety import SafetyLimits, SafetyReport, apply_guards
 from pysoarm.state import ArmState
@@ -121,6 +122,8 @@ class SOArm:
         configure_motors: Write PID/acceleration/mode/limits at connect (recommended).
         enable_torque: Enable torque at connect; with ``False`` the arm stays limp and
             ``write_goal`` is a no-op on real hardware.
+        kinematics: Optional forward/inverse kinematics; required only for
+            :meth:`forward` and :meth:`move_to_pose`.
         health_period_s: How often to refresh temperature/voltage/current.
         clock: Monotonic clock, injectable for tests.
         sleep: Sleep function, injectable for tests.
@@ -143,6 +146,7 @@ class SOArm:
         retries: int = DEFAULT_RETRIES,
         configure_motors: bool = True,
         enable_torque: bool = True,
+        kinematics: Kinematics | None = None,
         health_period_s: float = DEFAULT_HEALTH_PERIOD_S,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
@@ -169,6 +173,7 @@ class SOArm:
                 retries=retries,
             )
         self._calibration = self._load_calibration(calibration)
+        self._kinematics = kinematics
         self._configure_motors = configure_motors
         self._enable_torque = enable_torque
         self._health_period_s = health_period_s
@@ -186,6 +191,11 @@ class SOArm:
     def backend(self) -> Backend:
         """Transport selected at construction."""
         return self._backend
+
+    @property
+    def kinematics(self) -> Kinematics | None:
+        """Cartesian solver attached to this arm, if any."""
+        return self._kinematics
 
     @property
     def model(self) -> RobotModel:
@@ -480,6 +490,26 @@ class SOArm:
             raise
         return report.goal_deg
 
+    def enable_torque(self) -> None:
+        """Enable torque on every motor, holding the last commanded goal.
+
+        Raises:
+            BusConnectionError: If the bus is not open.
+        """
+        if not self._bus.is_open:
+            raise BusConnectionError("bus is not open; call connect() first")
+        self._bus.enable_torque(self._model.motor_ids)
+
+    def disable_torque(self) -> None:
+        """Disable torque on every motor (the arm goes limp).
+
+        Raises:
+            BusConnectionError: If the bus is not open.
+        """
+        if not self._bus.is_open:
+            raise BusConnectionError("bus is not open; call connect() first")
+        self._bus.disable_torque(self._model.motor_ids)
+
     def hold(self) -> ArmState:
         """Read the arm and immediately command the measured pose (a safe hold)."""
         state = self.read_once()
@@ -504,6 +534,78 @@ class SOArm:
         if profile == "linear":
             return LinearRamp(start=start, end=target, duration=duration)
         raise ConfigurationError(f"Unknown profile {profile!r}; expected 'minjerk' or 'linear'")
+
+    def _require_kinematics(self) -> Kinematics:
+        if self._kinematics is None:
+            raise ConfigurationError(
+                "no kinematics configured; pass kinematics=PlacoKinematics(urdf) to SOArm"
+            )
+        return self._kinematics
+
+    def forward(self, q_deg: Sequence[float] | None = None) -> Pose:
+        """End-effector pose for ``q_deg`` (default: the last measured pose).
+
+        Args:
+            q_deg: Joint values in degrees; ``None`` uses the most recent state.
+
+        Returns:
+            The end-effector :class:`~pysoarm.kinematics.base.Pose`.
+
+        Raises:
+            ConfigurationError: No kinematics solver, no state, or a wrong joint count.
+        """
+        kinematics = self._require_kinematics()
+        if q_deg is None:
+            if self._state is None:
+                raise ConfigurationError("no state yet; call read_once() or pass q_deg")
+            values = self._state.q_deg
+        else:
+            values = tuple(float(value) for value in q_deg)
+        if len(values) != self._model.joint_count:
+            raise ConfigurationError(
+                f"Expected {self._model.joint_count} joint values, got {len(values)}"
+            )
+        return kinematics.forward(values)
+
+    def move_to_pose(
+        self,
+        pose: Pose,
+        *,
+        duration: float = 2.0,
+        hz: float | None = None,
+        seed_deg: Sequence[float] | None = None,
+        max_iters: int | None = None,
+    ) -> ArmState:
+        """Move the end effector to ``pose``: solve IK, then run a joint-space move.
+
+        The IK solve happens **before** any goal is written, so an unreachable target leaves
+        the arm exactly where it was (:class:`~pysoarm.exceptions.NotReachableError`). The
+        resulting joint goal still passes every safety guard through :meth:`write_goal`.
+
+        Args:
+            pose: Target end-effector pose.
+            duration: Motion duration in seconds.
+            hz: Loop rate for the joint-space move; defaults to 200 Hz.
+            seed_deg: IK seed; defaults to the current measured joints.
+            max_iters: Override the solver's iteration budget.
+
+        Returns:
+            The state measured after the move.
+
+        Raises:
+            ConfigurationError: No kinematics solver or mismatched joint count.
+            NotReachableError: IK did not converge; the arm was not commanded.
+        """
+        kinematics = self._require_kinematics()
+        state = self._state if self._state is not None else self.read_once()
+        seed = state.q_deg if seed_deg is None else tuple(float(v) for v in seed_deg)
+        solution = kinematics.inverse(pose, seed_deg=seed, max_iters=max_iters)
+        if len(solution) != self._model.joint_count:
+            raise ConfigurationError(
+                f"Kinematics returned {len(solution)} joints, model "
+                f"{self._model.name!r} has {self._model.joint_count}"
+            )
+        return self.move_to(solution, duration=duration, hz=hz)
 
     def move_to(
         self,
