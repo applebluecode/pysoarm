@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.1.0] - 2026-11-04
+
+First public release: the device layer for one SO-100/SO-101 arm.
+
 ### Added
 
 - **Bus layer** (`pysoarm/bus/`): a `Bus` Protocol as the single I/O boundary, the STS3215
@@ -49,25 +55,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stream; `sync_read` issues sequential request/response pairs and the wire-level tests model
   the collision so a regression fails CI.
 
-### Documentation
-
-- Added [ADR 0001](docs/adr/0001-scope-device-layer.md): pysoarm is a device-layer SDK. It
-  records the rule for what belongs in the package, lists teleoperation, dataset recording,
-  policies and ROS drivers as explicit non-goals (with the reasoning and the alternatives
-  considered), and documents replay as a *primitive* (`ResampledTrajectory`) rather than a
-  dataset format. Mirrored in `README.md` under "Non-goals" and linked from the
-  architecture page and the mkdocs navigation.
-
-### Changed
-
-- Project metadata now points at the public repository
-  <https://github.com/applebluecode/pysoarm> (author `pysoarm contributors`, security reports via GitHub private
-  advisories, ROS 2 maintainer `pysoarm contributors`).
-- Development commands (`make lint|type|test|cov|docs|build`) now run through `uv run`;
-  `make check` runs the full CI set locally and `make install-dev` does
-  `uv sync --locked` + `pre-commit install`. A plain-pip path
-  (`pip install --group dev -e .`) remains documented for contributors without uv.
-
 - **Cartesian control** (`pysoarm/kinematics/`): a dependency-free `Pose` (metres + unit
   quaternion, RPY helpers), the `Kinematics` protocol, and `PlacoKinematics` behind the
   optional `kinematics` extra. `SOArm.forward()` and `SOArm.move_to_pose()` solve IK **before**
@@ -90,4 +77,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parameter declarations, endpoints, degree→radian conversion, command routing, stale-command
   rejection, the torque services and torque release on shutdown.
 
-[Unreleased]: https://github.com/applebluecode/pysoarm/compare/main...HEAD
+### Documentation
+
+- Added [ADR 0001](docs/adr/0001-scope-device-layer.md): pysoarm is a device-layer SDK. It
+  records the rule for what belongs in the package, lists teleoperation, dataset recording,
+  policies and ROS drivers as explicit non-goals (with the reasoning and the alternatives
+  considered), and documents replay as a *primitive* (`ResampledTrajectory`) rather than a
+  dataset format. Mirrored in `README.md` under "Non-goals" and linked from the
+  architecture page and the mkdocs navigation.
+
+### Changed
+
+- Project metadata now points at the public repository
+  <https://github.com/applebluecode/pysoarm> (author `pysoarm contributors`, security reports via GitHub private
+  advisories, ROS 2 maintainer `pysoarm contributors`).
+- Development commands (`make lint|type|test|cov|docs|build`) now run through `uv run`;
+  `make check` runs the full CI set locally and `make install-dev` does
+  `uv sync --locked` + `pre-commit install`. A plain-pip path
+  (`pip install --group dev -e .`) remains documented for contributors without uv.
+- `uv.lock` is resolved against pypi.org (the index pinned in `pyproject.toml`), so
+  `uv sync --locked` works on CI rather than only next to a local mirror config. `numpy`
+  joined the `dev` group because the kinematics adapter imports it at module level while
+  `placo` stays optional — its tests skip when the extra is absent.
+
+[Unreleased]: https://github.com/applebluecode/pysoarm/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/applebluecode/pysoarm/releases/tag/v0.1.0

@@ -1,6 +1,6 @@
 # Quickstart
 
-!!! note "Pre-release"
+!!! note "Version 0.1.0"
     The snippets below describe the 0.1.0 API and are kept in sync with `arm.py`.
 
 ## Hold the current pose (safest first program)

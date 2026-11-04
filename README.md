@@ -14,9 +14,11 @@ no training stack. It targets the ergonomics of `pylibfranka` / `pyAgxArm`
 (`connect()` → `read_once()` → `write_goal()` / control loop) within what position-servo
 hardware can actually do.
 
-> **Status: 0.1.0-dev.** Bus transport (SCS over `pyserial`), calibration, safety guards,
-> trajectories, the `SOArm` device object and the CLI are implemented and covered by tests,
-> including opt-in hardware tests on a real SO-101.
+> **Status: 0.1.0.** Bus transport (SCS over `pyserial` and the optional `rustypot` backend),
+> calibration, safety guards, trajectories, Cartesian kinematics, the `SOArm` device object,
+> the `ArmBridge`/ROS 2 adapter and the CLI are implemented and covered by tests, including
+> opt-in hardware tests on a real SO-101. Teleoperation, dataset recording and policies are
+> deliberate non-goals — see [ADR 0001](docs/adr/0001-scope-device-layer.md).
 
 ## Why
 
