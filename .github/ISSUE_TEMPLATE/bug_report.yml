@@ -6,7 +6,8 @@ body:
     attributes:
       value: |
         Thanks for the report. For **physical-safety** problems (unexpected motion, torque
-        left enabled, watchdog not firing) skip this form and email security@example.com.
+        left enabled, watchdog not firing) skip this form and use private reporting:
+        https://github.com/applebluecode/pysoarm/security/advisories/new
 
   - type: textarea
     id: what-happened

@@ -24,10 +24,13 @@ reasonably be considered inappropriate in a professional setting.
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behaviour may be reported to the
-maintainers at `maintainers@example.com`. All complaints will be reviewed and investigated
-promptly and fairly. Maintainers are obligated to respect the privacy and security of the
-reporter of any incident.
+Instances of abusive, harassing, or otherwise unacceptable behaviour may be reported
+privately to the maintainer via
+<https://github.com/applebluecode/pysoarm/security/advisories/new> (confidential) or by
+contacting [@applebluecode](https://github.com/applebluecode) on GitHub, or by email at
+`singlecycle27@163.com`. All complaints will
+be reviewed and investigated promptly and fairly. The maintainer is obligated to respect the
+privacy and security of the reporter of any incident.
 
 ## Attribution
 

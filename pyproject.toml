@@ -9,8 +9,8 @@ description = "Lean, hardware-level Python API for SO-100/SO-101 robot arms (Fee
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
-license-files = ["LICENSE"]
-authors = [{ name = "pysoarm contributors" }]
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "jw", email = "singlecycle27@163.com" }]
 keywords = [
   "robotics",
   "so-101",
@@ -51,11 +51,11 @@ kinematics = ["numpy>=1.24", "placo>=0.8"]
 pysoarm = "pysoarm.cli.main:main"
 
 [project.urls]
-Homepage = "https://github.com/USER/pysoarm"
-Documentation = "https://github.com/USER/pysoarm#readme"
-Repository = "https://github.com/USER/pysoarm"
-Issues = "https://github.com/USER/pysoarm/issues"
-Changelog = "https://github.com/USER/pysoarm/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/applebluecode/pysoarm"
+Documentation = "https://github.com/applebluecode/pysoarm#readme"
+Repository = "https://github.com/applebluecode/pysoarm"
+Issues = "https://github.com/applebluecode/pysoarm/issues"
+Changelog = "https://github.com/applebluecode/pysoarm/blob/main/CHANGELOG.md"
 
 # --------------------------------------------------------------------------- #
 # Development environment (PEP 735 dependency groups — not part of the package)
@@ -115,6 +115,7 @@ include = [
   "/CHANGELOG.md",
   "/README.md",
   "/LICENSE",
+  "/NOTICE",
 ]
 
 # --------------------------------------------------------------------------- #

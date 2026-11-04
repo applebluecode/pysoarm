@@ -60,6 +60,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Project metadata now points at the public repository
+  <https://github.com/applebluecode/pysoarm> (author `jw`, security reports via GitHub private
+  advisories, ROS 2 maintainer `jw`).
 - Development commands (`make lint|type|test|cov|docs|build`) now run through `uv run`;
   `make check` runs the full CI set locally and `make install-dev` does
   `uv sync --locked` + `pre-commit install`. A plain-pip path
@@ -87,4 +90,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parameter declarations, endpoints, degree→radian conversion, command routing, stale-command
   rejection, the torque services and torque release on shutdown.
 
-[Unreleased]: https://github.com/USER/pysoarm/compare/main...HEAD
+[Unreleased]: https://github.com/applebluecode/pysoarm/compare/main...HEAD

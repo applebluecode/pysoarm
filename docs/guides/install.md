@@ -11,7 +11,7 @@ pip install "pysoarm[kinematics]"   # + FK/IK (placo)
 ## From source (development)
 
 ```bash
-git clone https://github.com/USER/pysoarm && cd pysoarm
+git clone https://github.com/applebluecode/pysoarm && cd pysoarm
 make install-dev     # uv sync --locked + pre-commit hooks
 make check           # lint + type + test
 ```

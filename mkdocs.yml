@@ -1,8 +1,8 @@
 site_name: pysoarm
 site_description: Lean, hardware-level Python API for SO-100/SO-101 robot arms.
-site_url: https://USER.github.io/pysoarm/
-repo_url: https://github.com/USER/pysoarm
-repo_name: USER/pysoarm
+site_url: https://applebluecode.github.io/pysoarm/
+repo_url: https://github.com/applebluecode/pysoarm
+repo_name: applebluecode/pysoarm
 edit_uri: edit/main/docs/
 
 docs_dir: docs

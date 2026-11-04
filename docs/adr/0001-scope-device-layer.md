@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-11-02
-- **Deciders:** pysoarm maintainers
+- **Deciders:** jw
 - **Related:** `SECURITY.md` (repo root), [Architecture](../architecture.md), [Hardware notes](../hardware.md)
 
 ## Context

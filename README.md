@@ -1,6 +1,6 @@
 # pysoarm
 
-[![CI](https://github.com/USER/pysoarm/actions/workflows/ci.yml/badge.svg)](https://github.com/USER/pysoarm/actions/workflows/ci.yml)
+[![CI](https://github.com/applebluecode/pysoarm/actions/workflows/ci.yml/badge.svg)](https://github.com/applebluecode/pysoarm/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/pysoarm.svg)](https://pypi.org/project/pysoarm/)
 [![Python](https://img.shields.io/pypi/pyversions/pysoarm.svg)](https://pypi.org/project/pysoarm/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -66,7 +66,7 @@ pip install "pysoarm[dev]"         # lint, types, tests, build
 From source, for development ([uv](https://docs.astral.sh/uv/) is the supported workflow):
 
 ```bash
-git clone https://github.com/USER/pysoarm && cd pysoarm
+git clone https://github.com/applebluecode/pysoarm && cd pysoarm
 make install-dev        # = uv sync --locked && uv run pre-commit install
 ```
 

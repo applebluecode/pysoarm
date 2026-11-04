@@ -6,9 +6,14 @@
 
 ## Reporting a vulnerability
 
-Please **do not** open a public issue for security-relevant reports. Email the maintainers at
-`security@example.com` (PGP on request) with a description, a reproduction if possible, and
-the version affected. You can expect an acknowledgement within 72 hours.
+Please **do not** open a public issue for security-relevant reports. Use GitHub's private
+vulnerability reporting instead:
+
+<https://github.com/applebluecode/pysoarm/security/advisories/new>
+
+Alternatively email `singlecycle27@163.com`. Include a description, a reproduction if possible, and the
+version affected. You can expect
+an acknowledgement within 72 hours.
 
 ## Scope: physical safety is part of security here
 
