@@ -1,0 +1,14 @@
+# Stable device names for SO-101 arms (CH343 USB-CDC adapters, idVendor 1a86).
+#
+# Install:
+#   sudo cp 99-pysoarm.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# Find your adapter serials with:
+#   udevadm info -q property -n /dev/ttyACM0 | grep -E 'ID_SERIAL=|ID_VENDOR_ID='
+#
+# Replace REPLACE_FOLLOWER_SERIAL / REPLACE_LEADER_SERIAL with the values printed above
+# (for the reference hardware: 1a86_USB_Single_Serial_<serial> and ..._<serial>).
+
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ENV{ID_USB_SERIAL_SHORT}=="REPLACE_FOLLOWER_SERIAL", SYMLINK+="so101_follower", MODE="0666"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ENV{ID_USB_SERIAL_SHORT}=="REPLACE_LEADER_SERIAL", SYMLINK+="so101_leader", MODE="0666"

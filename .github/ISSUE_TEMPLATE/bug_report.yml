@@ -1,0 +1,68 @@
+name: Bug report
+description: Something behaves incorrectly (including motion/safety problems).
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. For **physical-safety** problems (unexpected motion, torque
+        left enabled, watchdog not firing) skip this form and email security@example.com.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Actual behaviour, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: The smallest script/command that shows the problem.
+      render: python
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: pysoarm version
+      description: Output of `pysoarm --version` or `pip show pysoarm`.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: arm
+    attributes:
+      label: Arm
+      options: [SO-101, SO-100, other STS3215 build]
+    validations:
+      required: true
+
+  - type: input
+    id: adapter
+    attributes:
+      label: Serial adapter / port
+      description: |
+        e.g. `1a86:55d3`, `/dev/ttyACM0`. Helpful: `udevadm info -q property -n <port>`.
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output / traceback
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: environment
+    attributes:
+      label: Environment checks
+      options:
+        - label: 'No other process holds the port (no suspended lerobot-*; lsof shows it free)'
+        - label: 'ModemManager is disabled or not involved'
+        - label: Reproduced with the latest released version

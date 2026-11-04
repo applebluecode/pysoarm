@@ -1,0 +1,67 @@
+site_name: pysoarm
+site_description: Lean, hardware-level Python API for SO-100/SO-101 robot arms.
+site_url: https://USER.github.io/pysoarm/
+repo_url: https://github.com/USER/pysoarm
+repo_name: USER/pysoarm
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+site_dir: site
+strict: true
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.tabs
+    - content.code.copy
+    - content.action.edit
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            show_source: false
+            show_root_heading: true
+            separate_signature: true
+            merge_init_into_class: true
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - Hardware notes: hardware.md
+  - Decisions (ADR):
+      - Overview: adr/index.md
+      - "0001 — Scope: device layer": adr/0001-scope-device-layer.md
+  - Guides:
+      - Install: guides/install.md
+      - Quickstart: guides/quickstart.md
+      - Testing: guides/testing.md
+  - API reference: reference/api.md
