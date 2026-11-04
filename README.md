@@ -134,8 +134,8 @@ Kinematics is optional (`pip install "pysoarm[kinematics]"`, needs your own URDF
 from pysoarm.kinematics import PlacoKinematics
 
 arm = SOArm("/dev/so101_follower", kinematics=PlacoKinematics("so101.urdf"))
-print(arm.forward())                     # current end-effector pose
-arm.move_to_pose(target_pose, duration=2.0)   # IK, then a joint-space move
+print(arm.forward())  # current end-effector pose
+arm.move_to_pose(target_pose, duration=2.0)  # IK, then a joint-space move
 ```
 
 Unreachable targets raise `NotReachableError` **before** anything is written.
