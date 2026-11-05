@@ -199,7 +199,7 @@ PYSOARM_HARDWARE_PORT=/dev/ttyACM0 pytest -m hardware
 ## Publishing
 
 1. bump `version` in `pyproject.toml` and `CHANGELOG.md`;
-2. `git tag v0.1.0 && git push --tags`;
+2. `git tag v0.1.1 && git push --tags`;
 3. the `release.yml` workflow builds, runs `twine check`, and publishes to PyPI via
    **trusted publishing** (OIDC, no API token stored).
 

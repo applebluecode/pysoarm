@@ -1,6 +1,6 @@
 # API reference
 
-Complete reference for the public API of `pysoarm` **0.1.0**. Every symbol documented here is
+Complete reference for the public API of `pysoarm` **0.1.1**. Every symbol documented here is
 importable from the top-level package:
 
 ```python

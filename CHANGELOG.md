@@ -7,12 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- Internal structural refactor, no public API or behaviour change: the control loop moved to
-  `pysoarm.loop`, health caching/tuning to `diagnostics.py`/`tuning.py`, calibration became a
-  `model` + `flow` package, and the CLI split into `parser.py`, `factories.py` and
-  `commands/`. Tests grew from 262 to 283 offline cases.
+_Nothing yet._
 
 ## [0.1.1] - 2026-11-05
 
@@ -49,8 +44,13 @@ Reliability, calibration and diagnostics: the follow-up to the first hardware re
 - **Gripper**: a thin `arm.gripper` facade (`open/close/move(percent)/hold/homing`); force
   remains servo-limited, not closed-loop.
 - **Examples**: all six now runnable offline with `--fake`; CI smoke-tests them.
-- **Tests**: 259 offline tests (was 207), covering status retry parity, calibration flow,
-  roles, the safety surface, loop policies/latency, diagnostics, CLI commands and examples.
+- **Structure**: internal refactor with no public API or behaviour change: the control loop
+  moved to `pysoarm.loop`, health caching/tuning to `diagnostics.py`/`tuning.py`, calibration
+  became a `model` + `flow` package, and the CLI split into `parser.py`, `factories.py` and
+  `commands/`.
+- **Tests**: 283 offline tests (was 207), covering status retry parity, calibration flow,
+  roles, the safety surface, loop policies/latency, diagnostics, CLI commands, examples and
+  the extracted modules.
 
 ## [0.1.0] - 2026-11-04
 
@@ -143,5 +143,6 @@ First public release: the device layer for one SO-100/SO-101 arm.
   joined the `dev` group because the kinematics adapter imports it at module level while
   `placo` stays optional — its tests skip when the extra is absent.
 
-[Unreleased]: https://github.com/applebluecode/pysoarm/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/applebluecode/pysoarm/releases/tag/v0.1.0
+[Unreleased]: https://github.com/applebluecode/pysoarm/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/applebluecode/pysoarm/releases/tag/v0.1.1
+[0.1.0]: https://pypi.org/project/pysoarm/0.1.0/
