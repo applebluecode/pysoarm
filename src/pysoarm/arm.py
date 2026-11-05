@@ -306,8 +306,7 @@ class SOArm:
                     )
                 elif self._limits.max_speed_deg_s is None:
                     _LOGGER.info(
-                        "safety limits: absolute cap %.1f deg/tick; voltage_min %.1f V "
-                        "(%s arm)",
+                        "safety limits: absolute cap %.1f deg/tick; voltage_min %.1f V (%s arm)",
                         self._limits.max_step_deg,
                         self._limits.voltage_min_v,
                         self._role,
