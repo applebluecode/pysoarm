@@ -547,6 +547,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#precision-deadband-and-drift" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Precision, deadband and drift
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supply-voltage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supply voltage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#known-traps" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -949,6 +971,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#precision-deadband-and-drift" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Precision, deadband and drift
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supply-voltage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supply voltage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#known-traps" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1173,6 +1217,12 @@ response  FF FF  ID  LEN  ERROR  [DATA...]    CHECKSUM
 <td>unsigned</td>
 </tr>
 <tr>
+<td><code>Goal_Speed</code></td>
+<td>46</td>
+<td>2</td>
+<td>sign-magnitude (15); <code>0</code> = unlimited</td>
+</tr>
+<tr>
 <td><code>Return_Delay_Time</code></td>
 <td>7</td>
 <td>1</td>
@@ -1192,6 +1242,77 @@ response  FF FF  ID  LEN  ERROR  [DATA...]    CHECKSUM
 </tr>
 </tbody>
 </table>
+<h2 id="precision-deadband-and-drift">Precision, deadband and drift<a class="headerlink" href="#precision-deadband-and-drift" title="Permanent link">&para;</a></h2>
+<p>The STS3215 is a 12-bit single-turn servo with an internal position PID, so the software sees
+three limits that are easy to mistake for bugs:</p>
+<table>
+<thead>
+<tr>
+<th>Quantity</th>
+<th>Value on the reference arm</th>
+<th>Consequence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Encoder resolution</td>
+<td><code>360 / 4095 = 0.0879°</code> per tick</td>
+<td>sub-degree goals are quantised</td>
+</tr>
+<tr>
+<td>Positioning deadband</td>
+<td>residual <strong>0.22–0.84°</strong> after a 5°/tick convergence</td>
+<td>do not chase sub-degree errors</td>
+</tr>
+<tr>
+<td>Minimum useful step</td>
+<td>about <strong>1°</strong></td>
+<td>tolerances should be ≥ 1°</td>
+</tr>
+<tr>
+<td>Servo following lag</td>
+<td>3–4.6° at ±15°/0.5 Hz</td>
+<td>use <code>set_motor_config()</code> (P gain, acceleration) if it matters</td>
+</tr>
+</tbody>
+</table>
+<p>A very small <code>max_step_deg</code> (e.g. <code>0.5</code>) is counter-productive: each step lands inside the
+deadband and the joint moves only ~0.18° in 0.3 s. By default pysoarm applies <strong>no software
+speed/step cap</strong> (matching LeRobot's <code>max_relative_target=None</code>), so the servo's own
+~270°/s no-load ceiling governs normal following. If you want an explicit safety ceiling,
+use <code>SafetyLimits(max_speed_deg_s=720)</code> (above the hardware ceiling, so it only clips jump
+commands) or a smaller value to deliberately slow the arm; <code>SafetyLimits.min_step_deg</code> can
+suppress commands below a chosen deadband.</p>
+<p>A <strong>leader is limp by design</strong>, so it drifts under gravity between sessions (observed:
+<code>wrist_roll</code> moving from −104° to −87°) and the follower faithfully follows. Hold or re-zero
+the leader when absolute repeatability matters; this is not a calibration bug.</p>
+<h2 id="supply-voltage">Supply voltage<a class="headerlink" href="#supply-voltage" title="Permanent link">&para;</a></h2>
+<p>Follower and leader rails are different and the default threshold follows the role:</p>
+<table>
+<thead>
+<tr>
+<th>Role</th>
+<th>Typical bus voltage</th>
+<th><code>SafetyLimits.voltage_min_v</code> default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>follower</td>
+<td>11.8–12.1 V</td>
+<td><code>10.0 V</code></td>
+</tr>
+<tr>
+<td>leader</td>
+<td>4.7–4.9 V (5 V rail)</td>
+<td><code>4.0 V</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>SOArm(role="leader")</code> (with <code>limits=None</code>) and <code>pysoarm doctor --role leader</code> use the leader
+threshold, so a healthy 4.8 V leader is no longer reported as undervoltage. At 4.7 V the
+servos can still drop the occasional reply; the bus retry and <code>connect()</code> backoff exist for
+that case, not to mask a weak supply.</p>
 <h2 id="known-traps">Known traps<a class="headerlink" href="#known-traps" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Exclusive port.</strong> Two processes on one tty → <code>Device or resource busy</code>. <code>stop()</code> a

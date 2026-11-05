@@ -952,6 +952,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#gripper-roles-and-tuning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gripper, roles and tuning
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1911,6 +1922,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Safety: pysoarm.safety">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#failure-thresholds-and-their-precedence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failure thresholds and their precedence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#precision-and-the-smallest-useful-step" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Precision and the smallest useful step
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1942,6 +1981,17 @@
     <span class="md-ellipsis">
       
         derate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pysoarm.safety.SafetyLimits.for_role" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        for_role
       
     </span>
   </a>
@@ -4016,6 +4066,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#gripper-roles-and-tuning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gripper, roles and tuning
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4975,6 +5036,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Safety: pysoarm.safety">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#failure-thresholds-and-their-precedence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failure thresholds and their precedence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#precision-and-the-smallest-useful-step" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Precision and the smallest useful step
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -5006,6 +5095,17 @@
     <span class="md-ellipsis">
       
         derate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pysoarm.safety.SafetyLimits.for_role" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        for_role
       
     </span>
   </a>
@@ -6933,7 +7033,7 @@
 
 
 <h1 id="api-reference">API reference<a class="headerlink" href="#api-reference" title="Permanent link">&para;</a></h1>
-<p>Complete reference for the public API of <code>pysoarm</code> <strong>0.1.1</strong>. Every symbol documented here is
+<p>Complete reference for the public API of <code>pysoarm</code> <strong>0.1.2</strong>. Every symbol documented here is
 importable from the top-level package:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pysoarm</span><span class="w"> </span><span class="kn">import</span> <span class="n">SOArm</span><span class="p">,</span> <span class="n">ArmState</span><span class="p">,</span> <span class="n">Calibration</span><span class="p">,</span> <span class="n">SafetyLimits</span><span class="p">,</span> <span class="n">Pose</span>
 </code></pre></div>
@@ -7226,8 +7326,11 @@ Tests use these to run the real code paths with <code>FakeBus</code> and no hard
 </code></pre></div>
 <p><code>connect()</code> is deliberately conservative: torque stays off while the motors are configured,
 the measured pose is written back as the first goal, and only then is torque enabled — the arm
-cannot jump on connect. The steps are idempotent where possible; calling <code>connect()</code> twice is
-harmless, and <code>stop()</code> may be called at any time in any state.</p>
+cannot jump on connect. A transient bus failure (no reply, checksum, alarm bit) is retried as
+a whole sequence with a short backoff (<code>connect(retries=2, backoff_s=0.25)</code>), which covers the
+serial-reopen race seen in containers; the final error names the attempt count and the
+<code>pysoarm doctor</code> command. Non-transient errors (wrong model, missing calibration) are never
+retried.</p>
 <h3 id="typical-calls">Typical calls<a class="headerlink" href="#typical-calls" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pysoarm</span><span class="w"> </span><span class="kn">import</span> <span class="n">SOArm</span>
 
@@ -7276,6 +7379,28 @@ harmless, and <code>stop()</code> may be called at any time in any state.</p>
 </table>
 <p>That amortisation is what keeps a 200 Hz loop inside its 5 ms budget while temperature and
 voltage stay fresh enough for the guards.</p>
+<h3 id="gripper-roles-and-tuning">Gripper, roles and tuning<a class="headerlink" href="#gripper-roles-and-tuning" title="Permanent link">&para;</a></h3>
+<p><code>arm.gripper</code> is a percent-of-travel facade over the sixth joint (<code>0</code> = closed end of the
+calibrated range, <code>100</code> = open end):</p>
+<div class="highlight"><pre><span></span><code><span class="n">arm</span><span class="o">.</span><span class="n">gripper</span><span class="o">.</span><span class="n">close</span><span class="p">(</span><span class="n">wait</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>     <span class="c1"># timed trajectory (default duration 0.5 s)</span>
+<span class="n">arm</span><span class="o">.</span><span class="n">gripper</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">wait</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">arm</span><span class="o">.</span><span class="n">gripper</span><span class="o">.</span><span class="n">move</span><span class="p">(</span><span class="mi">40</span><span class="p">,</span> <span class="n">wait</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>  <span class="c1"># 40 % open</span>
+<span class="n">arm</span><span class="o">.</span><span class="n">gripper</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>              <span class="c1"># one command; immediate with the default limits</span>
+<span class="n">arm</span><span class="o">.</span><span class="n">gripper</span><span class="o">.</span><span class="n">percent</span><span class="p">()</span>            <span class="c1"># current opening, 0..100</span>
+</code></pre></div>
+<p>Without <code>wait=True</code> the target is written once. With the default limits there is no step cap,
+so the servo heads straight there; if you configure <code>max_speed_deg_s</code>/<code>max_step_deg</code>, the goal
+is clipped to one step and the jaws may need several calls to arrive. <code>wait=True</code> runs a timed
+trajectory, which is the smooth option regardless of limits. <code>homing()</code> redefines the closed end at the current position; it
+does <strong>not</strong> move the jaws.</p>
+<p><code>role="leader"</code> makes the whole object read-only (no goal writes, torque stays off). Tuning
+registers are exposed per joint, including the servo's own velocity ceiling:</p>
+<div class="highlight"><pre><span></span><code><span class="n">arm</span><span class="o">.</span><span class="n">motor_config</span><span class="p">(</span><span class="s2">"gripper"</span><span class="p">)</span>                              <span class="c1"># dict of registers</span>
+<span class="n">arm</span><span class="o">.</span><span class="n">set_motor_config</span><span class="p">(</span><span class="s2">"shoulder_pan"</span><span class="p">,</span> <span class="n">goal_speed</span><span class="o">=</span><span class="mi">1000</span><span class="p">)</span>    <span class="c1"># 0 = servo-unlimited (default)</span>
+</code></pre></div>
+<p><code>goal_speed</code> (register 46) is the servo's internal limit and is independent of the software
+<code>step_for(hz)</code> guard and of the acceleration ramp; leaving it at <code>0</code> keeps the
+LeRobot-compatible configuration.</p>
 
 
 <div class="doc doc-object doc-module">
@@ -7349,6 +7474,9 @@ what position-servo hardware allows::</p>
     <span class="n">errors</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
     <span class="n">consecutive_errors_max</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
     <span class="n">latencies_s</span><span class="o">=</span><span class="p">(),</span>
+    <span class="n">read_errors</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+    <span class="n">callback_errors</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+    <span class="n">write_errors</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>
 
@@ -7429,7 +7557,8 @@ is counted rather than hidden by shortening the next period.</p>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Ticks that raised and were handled by a non-<code>abort</code> error policy.</p>
+                <p>Ticks that raised and were handled by a non-<code>abort</code> error policy. Always
+the sum of :attr:<code>read_errors</code>, :attr:<code>callback_errors</code> and :attr:<code>write_errors</code>.</p>
               </div>
             </td>
             <td>
@@ -7467,6 +7596,57 @@ to the completed goal write. Only ticks that wrote a goal are recorded.</p>
             </td>
             <td>
                   <code>()</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>read_errors</code>
+            </td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Failed ticks whose <code>read_state()</code> call raised. In teleoperation this
+usually means the leader (the read in the callback) or the follower read failed,
+while :attr:<code>callback_errors</code> is raised by user code (for example a second
+leader read inside the callback).</p>
+              </div>
+            </td>
+            <td>
+                  <code>0</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>callback_errors</code>
+            </td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Failed ticks whose callback raised.</p>
+              </div>
+            </td>
+            <td>
+                  <code>0</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>write_errors</code>
+            </td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Failed ticks whose goal write raised.</p>
+              </div>
+            </td>
+            <td>
+                  <code>0</code>
             </td>
           </tr>
       </tbody>
@@ -7960,7 +8140,10 @@ affect readability (return delay, phase, operating mode) are configured.</p>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Safety thresholds.</p>
+                <p>Safety thresholds. <code>None</code> (default) uses :meth:<code>SafetyLimits.for_role</code>, so a
+<code>leader</code> gets the 5 V threshold (4.0 V) instead of the follower's 10.0 V. The
+default applies <strong>no software speed/step cap</strong> (LeRobot parity); pass
+<code>SafetyLimits(max_speed_deg_s=720)</code> for the recommended teleoperation ceiling.</p>
               </div>
             </td>
             <td>
@@ -8248,7 +8431,9 @@ on every read, a large value keeps the hot path at one sync read.</p>
 
     <div class="doc doc-contents ">
 
-        <p>Multiplier applied to every per-tick step limit (default <code>1.0</code>).</p>
+        <p>Multiplier applied to a configured per-tick step limit (default <code>1.0</code>).</p>
+<p>With the default limits there is no step limit to scale, so this stays <code>1.0</code> and has
+no effect until <code>max_speed_deg_s</code> or <code>max_step_deg</code> is configured.</p>
 
     </div>
 
@@ -8456,7 +8641,12 @@ on every read, a large value keeps the hot path at one sync read.</p>
 
 
 <a href="#pysoarm.arm.SOArm.connect" class="headerlink" title="Permanent link">&para;</a></h4>
-<div class="doc-signature highlight"><pre><span></span><code><span class="nf">connect</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">allow_model_mismatch</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">connect</span><span class="p">(</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">allow_model_mismatch</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="n">retries</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">backoff_s</span><span class="o">=</span><span class="n">DEFAULT_CONNECT_BACKOFF_S</span><span class="p">,</span>
+<span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
@@ -8465,6 +8655,10 @@ on every read, a large value keeps the hot path at one sync read.</p>
 <p>The sequence is deliberately conservative: torque is off while the motors are
 configured, the measured pose is written back as the first goal, and only then is
 torque enabled. A leader is never commanded and its torque is never enabled.</p>
+<p>A transient bus failure (no reply, checksum, servo alarm) is retried as a <strong>whole
+connect sequence</strong>, after closing and reopening the port and waiting <code>backoff_s</code>.
+That covers the container/serial-reopen race observed on real hardware; it never
+retries a non-transient error (wrong model, missing calibration).</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -8493,6 +8687,40 @@ model's expectation (useful for clones or a mixed bench).</p>
             </td>
             <td>
                   <code>False</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>retries</code>
+            </td>
+            <td>
+                  <code><span title="int">int</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Extra whole-sequence attempts after a transient failure. <code>None</code>
+(default) uses :data:<code>~pysoarm.constants.DEFAULT_CONNECT_RETRIES</code> (2), for
+three attempts in total.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>backoff_s</code>
+            </td>
+            <td>
+                  <code><span title="float">float</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Wait between attempts, in seconds.</p>
+              </div>
+            </td>
+            <td>
+                  <code><span title="pysoarm.constants.DEFAULT_CONNECT_BACKOFF_S">DEFAULT_CONNECT_BACKOFF_S</span></code>
             </td>
           </tr>
       </tbody>
@@ -8524,7 +8752,8 @@ model's expectation (useful for clones or a mixed bench).</p>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>The servos report an unexpected model number.</p>
+                <p>The servos report an unexpected model number, or
+<code>retries</code>/<code>backoff_s</code> is negative.</p>
               </div>
             </td>
           </tr>
@@ -8544,7 +8773,8 @@ model's expectation (useful for clones or a mixed bench).</p>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>A register transaction failed after retries.</p>
+                <p>A register transaction failed after every attempt; the
+message includes the attempt count and a recovery hint.</p>
               </div>
             </td>
           </tr>
@@ -8791,7 +9021,8 @@ used when <code>health is None</code>.</p>
             <td>
               <div class="doc-md-description">
                 <p>Per-tick step limit override; defaults to
-<code>limits.step_for(last loop rate) * speed_scale</code>.</p>
+<code>limits.step_for(last loop rate) * speed_scale</code> (<code>inf</code> when no limit is
+configured, so the goal is only soft-limit clamped).</p>
               </div>
             </td>
             <td>
@@ -9422,7 +9653,10 @@ not change the control-path guards.</p>
 
     <div class="doc doc-contents ">
 
-        <p>Scale every per-tick step limit, for the first cautious run on hardware.</p>
+        <p>Scale a configured per-tick step limit, for the first cautious run on hardware.</p>
+<p>This multiplies <code>SafetyLimits.step_for(hz)</code>. With the default limits (no speed or
+step cap) there is nothing to scale and the value has no effect; configure
+<code>SafetyLimits(max_speed_deg_s=720)</code> or <code>max_step_deg</code> first when using it.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -10387,7 +10621,11 @@ hot path. A float re-enables it through the arm's round-robin refresh.</p>
               <div class="doc-md-description">
                 <p>What to do when a read, callback or write raises:
 <code>"abort"</code> (default) re-raises, <code>"hold"</code> leaves the last goal in place and
-continues, <code>"skip"</code> discards the tick and continues.</p>
+continues, <code>"skip"</code> discards the tick and continues. The raised error is
+attributed to its source in :attr:<code>LoopStats.read_errors</code>,
+:attr:<code>LoopStats.callback_errors</code> and :attr:<code>LoopStats.write_errors</code>, which
+matters in teleoperation (a leader read inside the callback is a <em>callback</em>
+error, not a follower read error).</p>
               </div>
             </td>
             <td>
@@ -10404,7 +10642,11 @@ continues, <code>"skip"</code> discards the tick and continues.</p>
             <td>
               <div class="doc-md-description">
                 <p>Abort after this many consecutive handled errors, so a
-dead bus cannot spin forever.</p>
+dead bus cannot spin forever. Note that the arm watchdog
+(<code>SafetyLimits.max_consecutive_failures</code>, default 3) trips first on bus
+failures and disables torque, raising :class:<code>WatchdogTimeout</code>; this cutoff
+(default 10) is the second line of defence for errors the watchdog does not
+see (callback bugs, a stalled leader).</p>
               </div>
             </td>
             <td>
@@ -12927,19 +13169,28 @@ fit its register.</p>
 </tr>
 <tr>
 <td>6</td>
-<td>Step size</td>
-<td><code>max_step_deg</code> (scaled by the derate factor)</td>
-<td>goal clipped to <code>state.q_deg ± max_step</code></td>
+<td>Step size (<strong>opt-in</strong>)</td>
+<td><code>step_for(hz) = min(max_step_deg, max_speed_deg_s / hz)</code> (scaled by the derate factor)</td>
+<td>goal clipped to <code>state.q_deg ± step</code>; no clipping when both limits are <code>None</code></td>
 </tr>
 <tr>
 <td>7</td>
+<td>Deadband</td>
+<td><code>min_step_deg</code></td>
+<td>command smaller than the deadband is not sent; measured position kept, reported in <code>reasons</code></td>
+</tr>
+<tr>
+<td>8</td>
 <td>Derating</td>
 <td><code>temp_warn_c</code></td>
-<td><code>SafetyLimits.derate()</code> returns a factor in <code>(0.25, 1.0]</code> from the hottest motor, which shrinks the allowed step</td>
+<td><code>SafetyLimits.derate()</code> returns a factor in <code>(0.25, 1.0]</code> from the hottest motor, which shrinks a configured step limit</td>
 </tr>
 </tbody>
 </table>
-<p><code>SafetyLimits()</code> defaults are the reference values used on the reference arm:</p>
+<p><code>SafetyLimits()</code> defaults put <strong>no software cap on the per-tick step or joint speed</strong>, matching
+LeRobot's SO follower (<code>max_relative_target=None</code>). Each guard-passing goal is sent as
+requested; the calibrated soft limits, thermal/voltage guards, watchdog and the servo itself
+still apply:</p>
 <table>
 <thead>
 <tr>
@@ -12951,8 +13202,18 @@ fit its register.</p>
 <tbody>
 <tr>
 <td><code>max_step_deg</code></td>
-<td><code>5.0</code></td>
-<td>Largest change of a joint between two goals</td>
+<td><code>None</code></td>
+<td>No fixed per-tick cap. Set e.g. <code>5.0</code> for a fixed absolute limit</td>
+</tr>
+<tr>
+<td><code>max_speed_deg_s</code></td>
+<td><code>None</code></td>
+<td>No speed cap. Set <code>720.0</code> for the recommended teleoperation preset (14.4°/tick @ 50 Hz, 3.6° @ 200 Hz)</td>
+</tr>
+<tr>
+<td><code>min_step_deg</code></td>
+<td><code>0.0</code></td>
+<td>Commands below this are not sent (servo deadband); <code>0</code> keeps the historical behaviour</td>
 </tr>
 <tr>
 <td><code>limit_margin_deg</code></td>
@@ -12971,8 +13232,8 @@ fit its register.</p>
 </tr>
 <tr>
 <td><code>voltage_min_v</code></td>
-<td><code>10.0</code></td>
-<td>Below this, goals are refused</td>
+<td><code>10.0</code> follower / <code>4.0</code> leader</td>
+<td>Below this, goals are refused; <code>SOArm(limits=None)</code> picks it from <code>role</code> via <code>SafetyLimits.for_role()</code></td>
 </tr>
 <tr>
 <td><code>max_consecutive_failures</code></td>
@@ -12981,10 +13242,69 @@ fit its register.</p>
 </tr>
 </tbody>
 </table>
+<p>Choosing a software limit is opt-in:</p>
+<div class="highlight"><pre><span></span><code><span class="n">SafetyLimits</span><span class="p">()</span>                       <span class="c1"># no speed/step cap (LeRobot parity, default)</span>
+<span class="n">SafetyLimits</span><span class="p">(</span><span class="n">max_speed_deg_s</span><span class="o">=</span><span class="mi">720</span><span class="p">)</span>    <span class="c1"># 720 deg/s at any loop rate</span>
+<span class="n">SafetyLimits</span><span class="p">(</span><span class="n">max_step_deg</span><span class="o">=</span><span class="mf">5.0</span><span class="p">)</span>       <span class="c1"># fixed 5 deg/tick at any loop rate</span>
+<span class="n">SafetyLimits</span><span class="p">(</span><span class="n">max_step_deg</span><span class="o">=</span><span class="mf">5.0</span><span class="p">,</span> <span class="n">max_speed_deg_s</span><span class="o">=</span><span class="mi">720</span><span class="p">)</span>  <span class="c1"># the stricter one wins</span>
+</code></pre></div>
+<p>When both are set, <code>step_for(hz)</code> returns the stricter value. <code>SOArm.set_speed_scale(s)</code> scales
+a configured limit; with the default unbounded limits there is nothing to scale, so configure
+<code>max_speed_deg_s</code>/<code>max_step_deg</code> first if you want to use it.</p>
 <p>The contract on tripping is part of the API: <code>WatchdogTimeout</code> leaves torque <strong>off</strong>, and
 <code>SafetyViolation</code>/<code>CalibrationError</code>/<code>NotReachableError</code> are raised <strong>before</strong> a goal is
 written, so the arm keeps its last safe target. Temperature is judged on the hottest motor
 (<code>ArmState.max_temperature_c</code>) and voltage on the lowest one (<code>ArmState.min_voltage_v</code>).</p>
+<h3 id="failure-thresholds-and-their-precedence">Failure thresholds and their precedence<a class="headerlink" href="#failure-thresholds-and-their-precedence" title="Permanent link">&para;</a></h3>
+<p>A teleoperation loop has two independent cutoffs. The <strong>arm watchdog</strong> sees bus failures and
+trips first; the <strong>loop cutoff</strong> is the second line of defence for errors the watchdog cannot
+see (a leader read inside the callback, a user-code bug):</p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Setting</th>
+<th>Default</th>
+<th>Effect when hit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Arm watchdog</td>
+<td><code>SafetyLimits.max_consecutive_failures</code></td>
+<td><code>3</code></td>
+<td><code>WatchdogTimeout</code>, torque disabled</td>
+</tr>
+<tr>
+<td>Loop cutoff</td>
+<td><code>run_control_loop(max_consecutive_errors=...)</code></td>
+<td><code>10</code></td>
+<td>re-raises the original error</td>
+</tr>
+<tr>
+<td>Loop policy</td>
+<td><code>run_control_loop(on_error=...)</code></td>
+<td><code>"abort"</code></td>
+<td><code>"hold"</code>/<code>"skip"</code> count the tick and continue</td>
+</tr>
+</tbody>
+</table>
+<p><code>LoopStats</code> attributes every handled failure to its source: <code>read_errors</code>,
+<code>callback_errors</code> and <code>write_errors</code> (their sum is <code>errors</code>). In teleoperation a failed
+<em>leader</em> read inside the callback is a <code>callback_error</code>, not a follower <code>read_error</code>.</p>
+<h3 id="precision-and-the-smallest-useful-step">Precision and the smallest useful step<a class="headerlink" href="#precision-and-the-smallest-useful-step" title="Permanent link">&para;</a></h3>
+<p>One encoder tick is <code>360 / 4095 = 0.0879°</code>. The servo's positioning deadband is larger than
+that: on the reference arm, a stream of 5°/tick commands converged to a residual of
+<strong>0.22–0.84°</strong>, and <code>max_step_deg=0.5</code> moved only ~0.18° in 0.3 s because the tiny steps fell
+inside the deadband. Practical guidance:</p>
+<ul>
+<li>treat <strong>≥ 1°</strong> as the repeatability floor for goals and tolerance checks;</li>
+<li>do not try to close a sub-degree error with repeated <code>write_goal()</code> calls — it will not move;</li>
+<li>if you must suppress deadband-sized commands, set <code>SafetyLimits.min_step_deg</code> (default <code>0</code>,
+  so behaviour is unchanged) and inspect <code>SafetyReport.reasons</code>;</li>
+<li>a leader arm is limp by design, so its pose <strong>drifts</strong> between sessions (gravity); the
+  follower faithfully follows that drift. Re-zero or hold the leader when this matters.</li>
+</ul>
 
 
 <div class="doc doc-object doc-module">
@@ -13007,8 +13327,12 @@ rules are unit-testable without hardware. They run in this order:</p>
 <li><strong>watchdog</strong> — too many consecutive read failures (<code>WatchdogTimeout</code>);</li>
 <li><strong>thermal / supply</strong> — too hot or undervoltage (<code>SafetyViolation</code>);</li>
 <li><strong>soft limits</strong> — clamp to the calibrated travel minus a margin;</li>
-<li><strong>per-step clipping</strong> — <code>|q_goal - q_now| &lt;= max_step_deg * derate</code>, the guard that makes
-   the first goal after connect (and every goal after a lost frame) unable to cause a jump.</li>
+<li><strong>per-step clipping</strong> — <code>|q_goal - q_now| &lt;= step</code>, where <code>step</code> is the strictest of
+   the absolute <code>max_step_deg</code> cap and the speed ceiling divided by the loop rate. That is
+   the guard that makes the first goal after connect (and every goal after a lost frame)
+   unable to cause a jump;</li>
+<li><strong>deadband</strong> — optional <code>min_step_deg</code>: a command smaller than the servo deadband is
+   not sent (the measured position is kept) and is reported in <code>reasons</code>.</li>
 </ol>
 
 
@@ -13044,12 +13368,13 @@ rules are unit-testable without hardware. They run in this order:</p>
 
 <a href="#pysoarm.safety.SafetyLimits" class="headerlink" title="Permanent link">&para;</a></h3>
 <div class="doc-signature highlight"><pre><span></span><code><span class="nf">SafetyLimits</span><span class="p">(</span>
-    <span class="n">max_step_deg</span><span class="o">=</span><span class="mf">5.0</span><span class="p">,</span>
+    <span class="n">max_step_deg</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
     <span class="n">max_speed_deg_s</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">min_step_deg</span><span class="o">=</span><span class="n">DEFAULT_MIN_STEP_DEG</span><span class="p">,</span>
     <span class="n">limit_margin_deg</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
     <span class="n">temp_warn_c</span><span class="o">=</span><span class="mf">55.0</span><span class="p">,</span>
     <span class="n">temp_max_c</span><span class="o">=</span><span class="mf">70.0</span><span class="p">,</span>
-    <span class="n">voltage_min_v</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span>
+    <span class="n">voltage_min_v</span><span class="o">=</span><span class="n">VOLTAGE_MIN_FOLLOWER_V</span><span class="p">,</span>
     <span class="n">max_consecutive_failures</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>
@@ -13059,6 +13384,14 @@ rules are unit-testable without hardware. They run in this order:</p>
 
 
         <p>Thresholds for the guards.</p>
+<p>The default configuration puts <strong>no software cap on the per-tick step or joint speed</strong>,
+matching LeRobot's SO follower (<code>max_relative_target=None</code>): each goal is sent as
+requested, bounded only by the calibrated soft limits, the thermal/voltage guards and the
+servo itself. This keeps leader-follower following as direct as LeRobot's.</p>
+<p>A speed ceiling is available when you want one. Set :attr:<code>max_speed_deg_s</code> for a
+rate-independent limit (<code>720</code> reproduces the value used by the pysoarm teleoperation
+validation: 14.4 deg/tick at 50 Hz, 3.6 deg/tick at 200 Hz), or :attr:<code>max_step_deg</code> for a
+fixed absolute per-tick cap. When both are set the stricter one wins.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -13077,15 +13410,17 @@ rules are unit-testable without hardware. They run in this order:</p>
                 <code>max_step_deg</code>
             </td>
             <td>
-                  <code><span title="float">float</span></code>
+                  <code><span title="float">float</span> | None</code>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Largest allowed change of a joint between two goals, in degrees.</p>
+                <p>Absolute per-tick ceiling in degrees, independent of the loop rate.
+<code>None</code> (default) means no fixed step cap. Use it when a single goal must never
+exceed a fixed jump even if the loop rate is unknown.</p>
               </div>
             </td>
             <td>
-                  <code>5.0</code>
+                  <code>None</code>
             </td>
           </tr>
           <tr class="doc-section-item">
@@ -13097,14 +13432,33 @@ rules are unit-testable without hardware. They run in this order:</p>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Optional joint-speed ceiling in degrees per second. When set, the
-per-tick limit is derived from the loop frequency with :meth:<code>step_for</code>, so the
-same physical speed is enforced at 50 Hz and at 200 Hz. The stricter of this and
-<code>max_step_deg</code> wins. <code>None</code> keeps the historical fixed-step behaviour.</p>
+                <p>Joint-speed ceiling in degrees per second. The per-tick limit is
+derived from the loop frequency with :meth:<code>step_for</code>, so the same physical
+speed is enforced at 50 Hz and at 200 Hz. <code>None</code> (default) means no speed
+cap. <code>720</code> is the recommended safety preset for teleoperation.</p>
               </div>
             </td>
             <td>
                   <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>min_step_deg</code>
+            </td>
+            <td>
+                  <code><span title="float">float</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Commands smaller than this are not sent: the joint keeps its measured
+position and the skip is reported in :attr:<code>SafetyReport.reasons</code>. Use it to
+avoid sub-degree <code>write_goal</code> calls that the servo deadband swallows. Default
+<code>0.0</code> keeps the historical behaviour.</p>
+              </div>
+            </td>
+            <td>
+                  <code><span title="pysoarm.constants.DEFAULT_MIN_STEP_DEG">DEFAULT_MIN_STEP_DEG</span></code>
             </td>
           </tr>
           <tr class="doc-section-item">
@@ -13164,11 +13518,12 @@ same physical speed is enforced at 50 Hz and at 200 Hz. The stricter of this and
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Supply voltage below which goals are refused.</p>
+                <p>Supply voltage below which goals are refused. The default matches a
+12 V follower bus; :meth:<code>for_role</code> picks <code>4.0 V</code> for a 5 V leader.</p>
               </div>
             </td>
             <td>
-                  <code>10.0</code>
+                  <code><span title="pysoarm.constants.VOLTAGE_MIN_FOLLOWER_V">VOLTAGE_MIN_FOLLOWER_V</span></code>
             </td>
           </tr>
           <tr class="doc-section-item">
@@ -13258,6 +13613,132 @@ same physical speed is enforced at 50 Hz and at 200 Hz. The stricter of this and
 <div class="doc doc-object doc-function">
 
 
+<h4 id="pysoarm.safety.SafetyLimits.for_role" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">for_role</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-classmethod"><code>classmethod</code></small>
+  </span>
+
+<a href="#pysoarm.safety.SafetyLimits.for_role" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">for_role</span><span class="p">(</span><span class="n">role</span><span class="p">,</span> <span class="o">**</span><span class="n">overrides</span><span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Default limits suitable for an arm used as <code>follower</code> or <code>leader</code>.</p>
+<p>A leader is powered from a 5 V rail and is never commanded, so it needs the lower
+voltage threshold (:data:<code>~pysoarm.constants.VOLTAGE_MIN_LEADER_V</code>) instead of the
+12 V follower threshold. Neither role gets a software speed cap by default.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>role</code>
+            </td>
+            <td>
+                  <code><span title="pysoarm.arm.Role">Role</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>"follower"</code> or <code>"leader"</code>.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>**overrides</code>
+            </td>
+            <td>
+                  <code><span title="object">object</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Fields forwarded to the constructor, so callers can tune one value
+without restating the role defaults.</p>
+              </div>
+            </td>
+            <td>
+                  <code>{}</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+<th>Name</th>          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+<td><code>A</code></td>            <td>
+                  <code><a class="autorefs autorefs-internal" title="SafetyLimits
+
+
+  
+      dataclass
+   (pysoarm.safety.SafetyLimits)" href="#pysoarm.safety.SafetyLimits">SafetyLimits</a></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>class:<code>SafetyLimits</code> with the role's voltage threshold.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+<p><span class="doc-section-title">Raises:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="ConfigurationError (pysoarm.exceptions.ConfigurationError)" href="#pysoarm.exceptions.ConfigurationError">ConfigurationError</a></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>On an unknown role or invalid overrides.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h4 id="pysoarm.safety.SafetyLimits.step_for" class="doc doc-heading">
             <span class="doc doc-object-name doc-function-name">step_for</span>
 
@@ -13317,7 +13798,7 @@ same physical speed is enforced at 50 Hz and at 200 Hz. The stricter of this and
             </td>
             <td>
               <div class="doc-md-description">
-                <p><code>min(max_step_deg, max_speed_deg_s / hz)</code> when a speed ceiling is configured,</p>
+                <p>The strictest of <code>max_step_deg</code> (when set) and <code>max_speed_deg_s / hz</code> (when</p>
               </div>
             </td>
           </tr>
@@ -13327,7 +13808,17 @@ same physical speed is enforced at 50 Hz and at 200 Hz. The stricter of this and
             </td>
             <td>
               <div class="doc-md-description">
-                <p>otherwise <code>max_step_deg</code>.</p>
+                <p>set). <code>math.inf</code> when neither is configured, which means "send the goal</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="float">float</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>unclipped" (still subject to the soft-limit and health guards).</p>
               </div>
             </td>
           </tr>
@@ -13647,7 +14138,9 @@ same physical speed is enforced at 50 Hz and at 200 Hz. The stricter of this and
             <td>
               <div class="doc-md-description">
                 <p>Per-tick step limit override, normally <code>limits.step_for(hz)</code> so that a
-speed ceiling is honoured at the loop's actual rate.</p>
+speed ceiling is honoured at the loop's actual rate. When omitted,
+<code>limits.step_for(DEFAULT_LOOP_HZ)</code> is used; with the default limits that is
+<code>math.inf</code>, so the goal is only soft-limit clamped.</p>
               </div>
             </td>
             <td>
@@ -20615,7 +21108,12 @@ frame/joints are unknown.</p>
 <span class="gp">$ </span>pysoarm<span class="w"> </span>bench<span class="w">   </span>--port<span class="w"> </span>/dev/ttyACM0<span class="w"> </span>--seconds<span class="w"> </span><span class="m">5</span>
 <span class="gp">$ </span>pysoarm<span class="w"> </span>doctor<span class="w">  </span>--port<span class="w"> </span>/dev/so101_follower
 <span class="gp">$ </span>pysoarm<span class="w"> </span>doctor<span class="w">  </span>--port<span class="w"> </span>/dev/ttyACM0<span class="w"> </span>--stress<span class="w"> </span><span class="m">3</span><span class="w">             </span><span class="c1"># electrical + status self-check</span>
+<span class="gp">$ </span>pysoarm<span class="w"> </span>doctor<span class="w">  </span>--port<span class="w"> </span>/dev/ttyACM0<span class="w"> </span>--role<span class="w"> </span>leader<span class="w"> </span>--json<span class="w">   </span><span class="c1"># 5 V thresholds, machine readable</span>
 </code></pre></div>
+<p>The JSON report contains <code>port</code>, <code>role</code>, <code>min_voltage_v</code>, <code>backend</code>, <code>checks</code>,
+<code>warnings</code>, <code>timeouts</code>, <code>status_alarms</code>, <code>alarm_counts</code>, <code>latency</code> and <code>failed_latency</code>.
+Timeouts (no reply) and status alarms (a reply with an <code>ERROR</code> bit) are counted separately;
+<code>--min-voltage</code> defaults to 10.0 V for a follower and 4.0 V for a leader.</p>
 <p>Exit codes: <code>0</code> success, <code>1</code> runtime error (bus, communication, safety), <code>2</code> usage error.</p>
 
 
