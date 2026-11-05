@@ -33,6 +33,11 @@ class Bus(Protocol):
     """
 
     @property
+    def backend(self) -> str:
+        """Short name of this transport (``"scs"``, ``"rustypot"``, ``"fake"``)."""
+        ...
+
+    @property
     def is_open(self) -> bool:
         """Whether the transport is open and usable."""
         ...
@@ -57,12 +62,14 @@ class Bus(Protocol):
         """Close the transport. Must be idempotent and must not raise."""
         ...
 
-    def read(self, motor_id: int, register: str) -> int:
+    def read(self, motor_id: int, register: str, *, retries: int | None = None) -> int:
         """Read one register of one motor.
 
         Args:
             motor_id: Servo id (1-253).
             register: Register name, e.g. ``"present_position"``.
+            retries: Override the bus' default retry count for this call. Hot paths can
+                trade one long timeout for several short attempts.
 
         Returns:
             The decoded integer value.
@@ -73,13 +80,16 @@ class Bus(Protocol):
         """
         ...
 
-    def write(self, motor_id: int, register: str, value: int) -> None:
+    def write(
+        self, motor_id: int, register: str, value: int, *, retries: int | None = None
+    ) -> None:
         """Write one register of one motor and wait for its acknowledgement.
 
         Args:
             motor_id: Servo id.
             register: Register name.
             value: Value to write.
+            retries: Override the bus' default retry count for this call.
 
         Raises:
             ConfigurationError: Unknown or read-only register.
@@ -87,12 +97,15 @@ class Bus(Protocol):
         """
         ...
 
-    def sync_read(self, motor_ids: Sequence[int], register: str) -> dict[int, int]:
+    def sync_read(
+        self, motor_ids: Sequence[int], register: str, *, retries: int | None = None
+    ) -> dict[int, int]:
         """Read one register from several motors in a single batch.
 
         Args:
             motor_ids: Servo ids to read.
             register: Register name.
+            retries: Override the bus' default retry count for this call.
 
         Returns:
             Mapping ``id -> value`` for every requested id.
@@ -102,7 +115,13 @@ class Bus(Protocol):
         """
         ...
 
-    def sync_write(self, register: str, values: Mapping[int, int]) -> None:
+    def sync_write(
+        self,
+        register: str,
+        values: Mapping[int, int],
+        *,
+        retries: int | None = None,
+    ) -> None:
         """Write one register of several motors in a single broadcast frame.
 
         The frame is fire-and-forget: there is no acknowledgement, which is what makes this
@@ -111,6 +130,7 @@ class Bus(Protocol):
         Args:
             register: Register name.
             values: Mapping ``id -> value``.
+            retries: Override the bus' default retry count for this call.
 
         Raises:
             ConfigurationError: Unknown register.

@@ -43,6 +43,7 @@ SO101 = RobotModel(
     joints=SO_JOINTS,
     motor_ids=(1, 2, 3, 4, 5, 6),
     gripper_joint="gripper",
+    servo_model_number=777,
     gripper_register_defaults=_GRIPPER_PROTECTION,
 )
 
@@ -51,6 +52,7 @@ SO100 = RobotModel(
     joints=SO_JOINTS,
     motor_ids=(1, 2, 3, 4, 5, 6),
     gripper_joint="gripper",
+    servo_model_number=777,
     gripper_register_defaults=_GRIPPER_PROTECTION,
 )
 

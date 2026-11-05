@@ -193,6 +193,17 @@ one of three places:
 `validate(model)` is called by `connect()`: missing joints, extra joints or duplicated motor
 ids raise `CalibrationError` **before** any motor is commanded.
 
+The motor-side flow is public in `pysoarm.calibration`:
+
+| Function | Purpose |
+|---|---|
+| `read_calibration(bus, model)` | read limits + homing offsets from the servos |
+| `write_calibration(bus, model, cal)` | persist a calibration to the servos |
+| `reset_calibration(bus, model)` | clear offsets, widen travel to `0..4095` |
+| `set_half_turn_homings(bus, model)` | Feetech `offset = position - 2047` |
+| `record_ranges(bus, model, stop=...)` | poll travel while the operator moves the arm |
+| `calibrate(bus, model, role=..., full_turn=...)` | the full flow above |
+
 ::: pysoarm.calibration
 
 ## Safety: `pysoarm.safety`
@@ -376,9 +387,14 @@ $ pysoarm scan  --port /dev/so101_follower
 $ pysoarm read  --port /dev/so101_follower --calibration follower.json
 $ pysoarm hold  --port /dev/so101_follower --calibration follower.json
 $ pysoarm monitor --port /dev/so101_follower --hz 5
-$ pysoarm pose  --urdf so101.urdf --joints 0 -30 60 0 90 40
-$ pysoarm ik    --urdf so101.urdf --x 0.2 --y 0 --z 0.15     # dry run, no hardware
-$ pysoarm doctor --port /dev/so101_follower
+$ pysoarm pose  --urdf so101.urdf --q "0,-30,60,0,90,40"
+$ pysoarm ik    --urdf so101.urdf --xyz 0.2 0 0.15           # dry run, no hardware
+$ pysoarm calibrate   --port /dev/ttyACM0 --role follower --id my_follower
+$ pysoarm calibration show   --port /dev/ttyACM0
+$ pysoarm calibration export --port /dev/ttyACM0 --output my_follower.json
+$ pysoarm bench   --port /dev/ttyACM0 --seconds 5
+$ pysoarm doctor  --port /dev/so101_follower
+$ pysoarm doctor  --port /dev/ttyACM0 --stress 3             # electrical + status self-check
 ```
 
 Exit codes: `0` success, `1` runtime error (bus, communication, safety), `2` usage error.

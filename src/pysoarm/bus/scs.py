@@ -120,6 +120,11 @@ class ScsBus:
 
     # -- lifecycle --------------------------------------------------------- #
     @property
+    def backend(self) -> str:
+        """This transport's name (``"scs"``)."""
+        return "scs"
+
+    @property
     def is_open(self) -> bool:
         """Whether the serial port is open."""
         return self._ser is not None and self._ser.is_open
@@ -216,18 +221,30 @@ class ScsBus:
                 if tail == HEADER:
                     break
             else:
-                raise CommunicationError(f"Lost frame synchronisation (tail={tail!r})", raw=tail)
+                raise CommunicationError(
+                    f"Lost frame synchronisation (tail={tail!r})", raw=tail, transient=True
+                )
         head = self._read_exact(3, deadline)  # id, len, status
         if head is None:
-            raise CommunicationError("Truncated status packet (header without body)")
+            raise CommunicationError(
+                "Truncated status packet (header without body)", transient=True
+            )
         motor_id, length, status = head[0], head[1], head[2]
         if length < _MIN_STATUS_LEN:
             raise CommunicationError(
-                f"Invalid LEN={length} in status packet from motor {motor_id}", raw=head
+                f"Invalid LEN={length} in status packet from motor {motor_id}",
+                motor_id=motor_id,
+                raw=head,
+                transient=True,
             )
         rest = self._read_exact(length - 1, deadline)  # data + checksum
         if rest is None:
-            raise CommunicationError(f"Truncated status packet from motor {motor_id}", raw=head)
+            raise CommunicationError(
+                f"Truncated status packet from motor {motor_id}",
+                motor_id=motor_id,
+                raw=head,
+                transient=True,
+            )
         data, checksum = rest[:-1], rest[-1]
         body = bytes([motor_id, length, status]) + data
         if (sum(body) + checksum) & 0xFF != _CHECKSUM_OK:
@@ -236,6 +253,7 @@ class ScsBus:
                 f"Checksum mismatch from motor {motor_id}: frame={frame.hex(' ')}",
                 motor_id=motor_id,
                 raw=frame,
+                transient=True,
             )
         return motor_id, status, data
 
@@ -256,6 +274,7 @@ class ScsBus:
                 motor_id=expected_id,
                 register=register,
                 raw=packet,
+                transient=True,
             )
         motor_id, status, data = reply
         if motor_id != expected_id:
@@ -264,6 +283,7 @@ class ScsBus:
                 motor_id=motor_id,
                 register=register,
                 raw=data,
+                transient=True,
             )
         if status != 0:
             raise CommunicationError(
@@ -271,16 +291,23 @@ class ScsBus:
                 motor_id=motor_id,
                 register=register,
                 raw=bytes([status]) + data,
+                status=status,
+                transient=True,
             )
         return data
 
-    def _with_retries(self, action: Callable[[], bytes]) -> bytes:
+    def _with_retries(self, action: Callable[[], bytes], retries: int | None = None) -> bytes:
+        """Run ``action`` until it succeeds, honouring the per-call retry override."""
+        attempts = (self._retries if retries is None else retries) + 1
+        if attempts < 1:
+            raise ConfigurationError("retries must be non-negative")
         last: CommunicationError | None = None
-        for _ in range(self._retries + 1):
+        for attempt in range(1, attempts + 1):
             try:
                 return action()
             except CommunicationError as exc:
                 last = exc
+                exc.attempts = attempt
         assert last is not None  # loop runs at least once
         raise last
 
@@ -291,13 +318,20 @@ class ScsBus:
             raise ConfigurationError(f"Motor id must be in 1..{MAX_MOTOR_ID}, got {motor_id}")
         return motor_id
 
-    def _read_register(self, motor_id: int, reg: Register, timeout_s: float | None = None) -> int:
+    def _read_register(
+        self,
+        motor_id: int,
+        reg: Register,
+        timeout_s: float | None = None,
+        retries: int | None = None,
+    ) -> int:
         """One request/response pair, with retries."""
         params = bytes([reg.addr, reg.size])
         data = self._with_retries(
             lambda: self._transact(
                 self._packet(motor_id, INSTR_READ, params), motor_id, reg.name, timeout_s
-            )
+            ),
+            retries,
         )
         if len(data) != reg.size:
             raise CommunicationError(
@@ -305,23 +339,39 @@ class ScsBus:
                 motor_id=motor_id,
                 register=reg.name,
                 raw=data,
+                transient=True,
             )
         return reg.decode(data)
 
-    def read(self, motor_id: int, register: str) -> int:
+    def read(self, motor_id: int, register: str, *, retries: int | None = None) -> int:
         """Read one register of one motor (see :class:`~pysoarm.bus.base.Bus`)."""
-        return self._read_register(self._validate_id(motor_id), get_register(register))
+        return self._read_register(
+            self._validate_id(motor_id), get_register(register), retries=retries
+        )
 
-    def write(self, motor_id: int, register: str, value: int) -> None:
+    def write(
+        self,
+        motor_id: int,
+        register: str,
+        value: int,
+        *,
+        retries: int | None = None,
+    ) -> None:
         """Write one register of one motor and wait for the acknowledgement."""
         reg = get_register(register)
         if not reg.writable:
             raise ConfigurationError(f"Register {reg.name!r} is read-only")
         mid = self._validate_id(motor_id)
         packet = self._packet(mid, INSTR_WRITE, bytes([reg.addr]) + reg.encode(value))
-        self._with_retries(lambda: self._transact(packet, mid, reg.name))
+        self._with_retries(lambda: self._transact(packet, mid, reg.name), retries)
 
-    def sync_read(self, motor_ids: Sequence[int], register: str) -> dict[int, int]:
+    def sync_read(
+        self,
+        motor_ids: Sequence[int],
+        register: str,
+        *,
+        retries: int | None = None,
+    ) -> dict[int, int]:
         """Read one register from several motors.
 
         Despite the name this is **not** a broadcast on this hardware: the bus is half-duplex,
@@ -334,7 +384,7 @@ class ScsBus:
         results: dict[int, int] = {}
         for mid in ids:
             try:
-                results[mid] = self._read_register(mid, reg)
+                results[mid] = self._read_register(mid, reg, retries=retries)
             except CommunicationError as exc:
                 missing = [pending for pending in ids if pending not in results]
                 raise CommunicationError(
@@ -343,11 +393,25 @@ class ScsBus:
                     motor_id=mid,
                     register=reg.name,
                     raw=exc.raw,
+                    status=exc.status,
+                    transient=exc.transient,
+                    attempts=exc.attempts,
                 ) from exc
         return results
 
-    def sync_write(self, register: str, values: Mapping[int, int]) -> None:
-        """Write one register of several motors in a single broadcast frame."""
+    def sync_write(
+        self,
+        register: str,
+        values: Mapping[int, int],
+        *,
+        retries: int | None = None,
+    ) -> None:
+        """Write one register of several motors in a single broadcast frame.
+
+        The frame is fire-and-forget, so ``retries`` only documents intent: the broadcast is
+        written once (re-sending it would be idempotent but would not improve reliability).
+        """
+        del retries
         reg = get_register(register)
         if not reg.writable:
             raise ConfigurationError(f"Register {reg.name!r} is read-only")

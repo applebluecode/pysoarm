@@ -25,6 +25,8 @@ class RobotModel:
         gripper_joint: Name of the gripper joint, if the arm has one.
         baudrate: Bus speed for this model.
         servo_model: Servo model name understood by the transport (``"sts3215"``).
+        servo_model_number: Model number the servo reports in its ``model_number`` register.
+            ``connect()`` compares it and refuses a mismatched arm unless explicitly allowed.
         gripper_register_defaults: Registers written at connect time for the gripper only,
             as ``(register, value)`` pairs (torque/current caps that protect the cheap servo).
 
@@ -38,6 +40,7 @@ class RobotModel:
     gripper_joint: str | None = None
     baudrate: int = DEFAULT_BAUDRATE
     servo_model: str = "sts3215"
+    servo_model_number: int | None = None
     gripper_register_defaults: tuple[tuple[str, int], ...] = ()
 
     def __post_init__(self) -> None:
@@ -101,6 +104,7 @@ class RobotModel:
             "gripper_joint": self.gripper_joint,
             "baudrate": self.baudrate,
             "servo_model": self.servo_model,
+            "servo_model_number": self.servo_model_number,
         }
 
 

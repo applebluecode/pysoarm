@@ -177,3 +177,46 @@ def test_guards_are_pure(calibration: Calibration) -> None:
 def test_invalid_limits_are_rejected(kwargs: dict[str, float], match: str) -> None:
     with pytest.raises(ConfigurationError, match=match):
         SafetyLimits(**kwargs)  # type: ignore[arg-type]
+
+
+def test_step_for_converts_speed_to_a_per_tick_limit() -> None:
+    limits = SafetyLimits(max_step_deg=30.0, max_speed_deg_s=720.0)
+    assert limits.step_for(50.0) == pytest.approx(14.4)
+    assert limits.step_for(200.0) == pytest.approx(3.6)
+    # the equivalent physical speed is identical at every rate
+    assert limits.step_for(50.0) * 50.0 == pytest.approx(limits.step_for(200.0) * 200.0)
+
+
+def test_step_for_keeps_the_stricter_of_both_limits() -> None:
+    limits = SafetyLimits(max_step_deg=5.0, max_speed_deg_s=400.0)
+    assert limits.step_for(50.0) == pytest.approx(5.0)  # speed would allow 8
+    assert SafetyLimits().step_for(200.0) == pytest.approx(5.0)
+
+
+def test_step_override_tightens_the_guard(calibration: Calibration) -> None:
+    report = apply_guards(
+        (30.0, *ZERO[1:]),
+        state=make_state(),
+        calibration=calibration,
+        model=SO101,
+        limits=SafetyLimits(max_step_deg=5.0),
+        step_deg=0.5,
+    )
+    assert report.goal_deg[0] == pytest.approx(0.5)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"max_speed_deg_s": 0.0}, "max_speed_deg_s"),
+        ({"max_speed_deg_s": -10.0}, "max_speed_deg_s"),
+    ],
+)
+def test_invalid_speed_limit_is_rejected(kwargs: dict[str, float], match: str) -> None:
+    with pytest.raises(ConfigurationError, match=match):
+        SafetyLimits(**kwargs)  # type: ignore[arg-type]
+
+
+def test_step_for_rejects_a_bad_rate() -> None:
+    with pytest.raises(ConfigurationError, match="hz must be positive"):
+        SafetyLimits().step_for(0.0)

@@ -12,6 +12,7 @@ and that is stated in their docstrings.
 from __future__ import annotations
 
 __all__ = [
+    "STATUS_FLAGS",
     "BusConnectionError",
     "CalibrationError",
     "CommunicationError",
@@ -21,7 +22,31 @@ __all__ = [
     "PysoarmError",
     "SafetyViolation",
     "WatchdogTimeout",
+    "status_flags",
 ]
+
+#: Named bits of the SCS/STS ``ERROR`` byte, in wire order. The names follow the Feetech
+#: manual (bit 0 is the least significant bit).
+STATUS_FLAGS: tuple[tuple[int, str], ...] = (
+    (0x01, "voltage"),
+    (0x02, "sensor"),
+    (0x04, "overheat"),
+    (0x08, "overcurrent"),
+    (0x10, "angle"),
+    (0x20, "overload"),
+)
+
+
+def status_flags(status: int) -> frozenset[str]:
+    """Decode an SCS/STS status byte into the set of named alarm bits.
+
+    Args:
+        status: The ``ERROR`` byte from a status packet (``0`` means healthy).
+
+    Returns:
+        The names of the set bits, e.g. ``frozenset({"overcurrent"})``.
+    """
+    return frozenset(name for bit, name in STATUS_FLAGS if status & bit)
 
 
 class PysoarmError(Exception):
@@ -40,12 +65,27 @@ class CommunicationError(PysoarmError):
     """A motor did not answer, or answered with a corrupt/error status packet.
 
     The arm is left holding its last goal; the caller (or the watchdog) decides whether to
-    keep going.
+    keep going.  The structured fields make that decision mechanical instead of textual::
+
+        try:
+            bus.sync_read(ids, "present_position")
+        except CommunicationError as exc:
+            if exc.transient and exc.attempts < 5:
+                ...  # retry the whole transaction
 
     Attributes:
         motor_id: Motor that failed, when known.
         register: Register name involved, when known.
         raw: Raw bytes received (or sent), for post-mortem; ``None`` if nothing arrived.
+        status: The SCS/STS ``ERROR`` byte, or ``None`` when the failure was not a status
+            packet (timeout, checksum, wrong id, short payload).
+        transient: Whether repeating the identical, idempotent transaction may succeed.
+            No-reply, checksum, truncated frames and servo alarm bits are transient; a
+            mis-addressed or malformed request is not (that is a ``ConfigurationError``).
+        attempts: Number of attempts actually made, including the failed one.
+
+    The :attr:`flags` property decodes :attr:`status` into the named alarm bits from
+    :data:`STATUS_FLAGS`.
     """
 
     def __init__(
@@ -55,11 +95,22 @@ class CommunicationError(PysoarmError):
         motor_id: int | None = None,
         register: str | None = None,
         raw: bytes | None = None,
+        status: int | None = None,
+        transient: bool = True,
+        attempts: int = 1,
     ) -> None:
         super().__init__(message)
         self.motor_id = motor_id
         self.register = register
         self.raw = raw
+        self.status = status
+        self.transient = transient
+        self.attempts = attempts
+
+    @property
+    def flags(self) -> frozenset[str]:
+        """Named alarm bits carried by :attr:`status` (empty for non-status failures)."""
+        return frozenset() if self.status is None else status_flags(self.status)
 
 
 class CalibrationError(PysoarmError):

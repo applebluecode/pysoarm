@@ -14,11 +14,13 @@ no training stack. It targets the ergonomics of `pylibfranka` / `pyAgxArm`
 (`connect()` → `read_once()` → `write_goal()` / control loop) within what position-servo
 hardware can actually do.
 
-> **Status: 0.1.0.** Bus transport (SCS over `pyserial` and the optional `rustypot` backend),
-> calibration, safety guards, trajectories, Cartesian kinematics, the `SOArm` device object,
-> the `ArmBridge`/ROS 2 adapter and the CLI are implemented and covered by tests, including
-> opt-in hardware tests on a real SO-101. Teleoperation, dataset recording and policies are
-> deliberate non-goals — see [ADR 0001](docs/adr/0001-scope-device-layer.md).
+> **Status: 0.1.1.** Bus transport (SCS over `pyserial` and the optional `rustypot` backend),
+> calibration (including the motor-side flow and `pysoarm calibrate`), safety guards,
+> trajectories, Cartesian kinematics, the `SOArm` device object with follower/leader roles,
+> structured diagnostics, the `ArmBridge`/ROS 2 adapter and the CLI are implemented and
+> covered by tests, including opt-in hardware tests on a real SO-101. Teleoperation, dataset
+> recording and policies are deliberate non-goals — see
+> [ADR 0001](docs/adr/0001-scope-device-layer.md).
 
 ## Why
 
@@ -30,7 +32,9 @@ hardware can actually do.
 * **Explicit safety layer**: per-step clipping, soft limits, temperature/voltage
   guards, communication watchdog — the parts that usually get skipped in quick scripts.
 * **Reuses your existing calibration** (LeRobot-compatible JSON) instead of forcing
-  a re-calibration.
+  a re-calibration, and can run the Feetech calibration flow itself (`pysoarm calibrate`).
+* **Field diagnostics**: structured status bits, `arm.health()`, `pysoarm doctor --stress`,
+  per-tick latency/p95 and an error policy that survives a lost frame.
 
 ## What it is not
 
@@ -83,7 +87,7 @@ pre-commit install
 ## Quickstart
 
 ```python
-from pysoarm import SOArm  # noqa: F401  (API lands in 0.1.0)
+from pysoarm import SOArm
 
 arm = SOArm(port="/dev/so101_follower", calibration="my_follower.json")
 arm.connect()
@@ -94,13 +98,20 @@ finally:
     arm.stop()
 ```
 
+A leader arm is the same object with `role="leader"` (read-only, torque stays off):
+
+```python
+leader = SOArm("/dev/so101_leader", role="leader", calibration="my_leader.json")
+```
+
 ## Repository layout
 
 ```
 src/pysoarm/          # the importable package (src layout)
   arm.py              # SOArm: high-level device object (pylibfranka-like surface)
   state.py            # immutable ArmState snapshots
-  calibration.py      # LeRobot-compatible calibration JSON + degrees <-> raw ticks
+  calibration.py      # LeRobot JSON, degrees <-> ticks, and the motor-side calibration flow
+  gripper.py          # thin percent-of-travel facade over the sixth joint
   safety.py           # limits, guards, watchdog
   trajectory.py       # interpolators / ramps for move_to()
   bus/                # transport backends behind one Protocol (base, scs, rustypot, fake)

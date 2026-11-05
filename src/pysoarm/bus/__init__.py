@@ -43,6 +43,7 @@ __all__ = [
     "ScsBus",
     "get_register",
     "make_bus",
+    "resolve_backend",
 ]
 
 #: Transport selector accepted by :func:`make_bus`, :class:`~pysoarm.arm.SOArm` and the CLI.
@@ -58,11 +59,31 @@ def _rustypot_available() -> bool:
         return False
 
 
+def resolve_backend(backend: Backend) -> Literal["scs", "rustypot"]:
+    """Resolve ``"auto"`` to a concrete backend.
+
+    Args:
+        backend: ``"scs"``, ``"rustypot"`` or ``"auto"``.
+
+    Returns:
+        ``"rustypot"`` when available and requested (or implied by ``"auto"``), else
+        ``"scs"``.
+
+    Raises:
+        ConfigurationError: If ``backend`` is not one of the supported names.
+    """
+    if backend == "auto":
+        return "rustypot" if _rustypot_available() else "scs"
+    if backend in ("scs", "rustypot"):
+        return backend
+    raise ConfigurationError(f"Unknown backend {backend!r}; expected one of {BACKENDS}")
+
+
 def make_bus(
     port: str,
     motor_ids: Sequence[int],
     *,
-    backend: Backend = "scs",
+    backend: Backend = "auto",
     servo_model: str = "sts3215",
     baudrate: int = DEFAULT_BAUDRATE,
     timeout_s: float = DEFAULT_TIMEOUT_S,
@@ -73,7 +94,8 @@ def make_bus(
     Args:
         port: Serial device path.
         motor_ids: Servo ids on the bus.
-        backend: ``"scs"`` (default), ``"rustypot"`` or ``"auto"`` (rustypot when importable).
+        backend: ``"auto"`` (default: rustypot when importable, else scs), ``"scs"`` or
+            ``"rustypot"``.
         servo_model: Servo model name, used by the rustypot backend.
         baudrate: Bus speed.
         timeout_s: Per-transaction timeout in seconds.
@@ -85,8 +107,7 @@ def make_bus(
     Raises:
         ConfigurationError: Unknown backend, or ``rustypot`` requested but not installed.
     """
-    if backend == "auto":
-        backend = "rustypot" if _rustypot_available() else "scs"
+    backend = resolve_backend(backend)
     if backend == "rustypot":
         return RustypotBus(
             port,
@@ -96,6 +117,4 @@ def make_bus(
             timeout_s=timeout_s,
             retries=retries,
         )
-    if backend == "scs":
-        return ScsBus(port, motor_ids, baudrate=baudrate, timeout_s=timeout_s, retries=retries)
-    raise ConfigurationError(f"Unknown backend {backend!r}; expected one of {BACKENDS}")
+    return ScsBus(port, motor_ids, baudrate=baudrate, timeout_s=timeout_s, retries=retries)

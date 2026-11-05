@@ -1,7 +1,28 @@
 # Quickstart
 
-!!! note "Version 0.1.0"
-    The snippets below describe the 0.1.0 API and are kept in sync with `arm.py`.
+!!! note "Version 0.1.1"
+    The snippets below describe the current API and are kept in sync with `arm.py`.
+
+## Calibrate a fresh arm
+
+```console
+$ pysoarm calibrate --port /dev/ttyACM0 --role follower --id my_follower
+$ pysoarm calibration show --port /dev/ttyACM0
+$ pysoarm calibration export --port /dev/ttyACM0 --output my_follower.json
+```
+
+The flow disables torque, resets the motor-side calibration, sets half-turn homings
+(`homing_offset = position - 2047`), records each joint's travel while you move it, then
+writes the result back. `wrist_roll` is recorded over `0..4095` unless `--full-turn` is used.
+
+## Leader (read-only) arm
+
+```python
+from pysoarm import SOArm
+
+with SOArm("/dev/ttyACM1", role="leader", calibration="my_leader.json") as leader:
+    state = leader.read_once()   # no goal is ever written, torque stays off
+```
 
 ## Hold the current pose (safest first program)
 

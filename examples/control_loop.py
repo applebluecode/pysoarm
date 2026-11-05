@@ -1,13 +1,38 @@
 """A 200 Hz control loop with a callback, pylibfranka-style.
 
-Intended behaviour::
+The callback returns the goal for the next tick; returning ``None`` holds without writing.
+Statistics include overruns and the command latency distribution:
 
-    arm.run_control_loop(lambda state, t: hold(state.q_deg), hz=200, duration=3.0)
-
-and print the cycle-time statistics (mean / p99 / overruns) that the loop records. The
-measured budget on reference hardware is ~1.2 ms per read+write step.
+    python examples/control_loop.py --fake --seconds 1
 """
 
 from __future__ import annotations
 
-raise NotImplementedError("example lands with the 0.1.0 implementation")
+import argparse
+
+from _common import add_connection_args, open_arm
+from pysoarm import ArmState
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_connection_args(parser)
+    parser.add_argument("--hz", type=float, default=200.0)
+    parser.add_argument("--seconds", type=float, default=3.0)
+    args = parser.parse_args()
+    arm = open_arm(args)
+
+    def hold(state: ArmState, elapsed: float) -> tuple[float, ...]:
+        del elapsed
+        return state.q_deg
+
+    try:
+        stats = arm.run_control_loop(hold, hz=args.hz, duration=args.seconds)
+        print(stats.as_dict())
+    finally:
+        arm.stop()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

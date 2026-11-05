@@ -316,3 +316,28 @@ def test_sync_read_reports_the_missing_motors() -> None:
     bus.open()
     with pytest.raises(CommunicationError, match=r"No reply from motor\(s\) \[3\]"):
         bus.sync_read((1, 2, 3), "present_position")
+
+
+def test_status_errors_carry_structured_fields_and_are_retried() -> None:
+    peer = FakeSerialPeer()
+    peer.force_status = 0x08
+    bus = make_bus(peer, retries=2)
+    bus.open()
+    with pytest.raises(CommunicationError) as excinfo:
+        bus.read(1, "present_position")
+    error = excinfo.value
+    assert error.status == 0x08
+    assert error.flags == frozenset({"overcurrent"})
+    assert error.transient is True
+    assert error.attempts == 3  # one initial attempt + two retries
+    assert len(peer.requests) == 3
+
+
+def test_per_call_retry_override_is_honoured() -> None:
+    peer = FakeSerialPeer()
+    peer.drop_reads = 1
+    bus = make_bus(peer, retries=0)
+    bus.open()
+    # The bus defaults to no retries, but the hot path asks for two attempts.
+    assert bus.read(1, "present_position", retries=1) == 2048
+    assert len(peer.requests) == 2

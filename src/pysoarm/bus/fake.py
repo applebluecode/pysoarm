@@ -90,6 +90,7 @@ class FakeBus:
             "min_position_limit": 0,
             "max_position_limit": 4095,
             "max_torque_limit": 1000,
+            "torque_limit": 1000,
             "phase": 0,
             "p_coefficient": 16,
             "d_coefficient": 32,
@@ -144,6 +145,11 @@ class FakeBus:
 
     # -- Bus protocol ------------------------------------------------------ #
     @property
+    def backend(self) -> str:
+        """This transport's name (``"fake"``)."""
+        return "fake"
+
+    @property
     def is_open(self) -> bool:
         """Whether the fake bus is open."""
         return self._is_open
@@ -163,8 +169,9 @@ class FakeBus:
     def __exit__(self, *exc_info: object) -> None:
         self.close()
 
-    def read(self, motor_id: int, register: str) -> int:
+    def read(self, motor_id: int, register: str, *, retries: int | None = None) -> int:
         """Read one register of one motor."""
+        del retries  # the fake never retries: failures are injected deterministically
         reg = get_register(register)
         self._require_open()
         self._maybe_fail("read")
@@ -177,8 +184,11 @@ class FakeBus:
                 f"Motor {motor_id} does not expose register {reg.name!r}"
             ) from exc
 
-    def write(self, motor_id: int, register: str, value: int) -> None:
+    def write(
+        self, motor_id: int, register: str, value: int, *, retries: int | None = None
+    ) -> None:
         """Write one register of one motor."""
+        del retries
         reg = get_register(register)
         if not reg.writable:
             raise ConfigurationError(f"Register {reg.name!r} is read-only")
@@ -187,8 +197,11 @@ class FakeBus:
         self.calls.append(("write", reg.name, motor_id, value))
         self._apply(motor_id, reg.name, value)
 
-    def sync_read(self, motor_ids: Sequence[int], register: str) -> dict[int, int]:
+    def sync_read(
+        self, motor_ids: Sequence[int], register: str, *, retries: int | None = None
+    ) -> dict[int, int]:
         """Read one register from several motors in one call."""
+        del retries
         reg = get_register(register)
         self._require_open()
         self._maybe_fail("read")
@@ -204,8 +217,15 @@ class FakeBus:
                 ) from exc
         return result
 
-    def sync_write(self, register: str, values: Mapping[int, int]) -> None:
+    def sync_write(
+        self,
+        register: str,
+        values: Mapping[int, int],
+        *,
+        retries: int | None = None,
+    ) -> None:
         """Write one register of several motors in one call."""
+        del retries
         reg = get_register(register)
         if not reg.writable:
             raise ConfigurationError(f"Register {reg.name!r} is read-only")

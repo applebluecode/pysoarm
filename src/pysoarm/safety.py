@@ -31,6 +31,10 @@ class SafetyLimits:
 
     Args:
         max_step_deg: Largest allowed change of a joint between two goals, in degrees.
+        max_speed_deg_s: Optional joint-speed ceiling in degrees per second. When set, the
+            per-tick limit is derived from the loop frequency with :meth:`step_for`, so the
+            same physical speed is enforced at 50 Hz and at 200 Hz. The stricter of this and
+            ``max_step_deg`` wins. ``None`` keeps the historical fixed-step behaviour.
         limit_margin_deg: Margin kept inside the calibrated travel, in degrees.
         temp_warn_c: Temperature above which goals are derated.
         temp_max_c: Temperature at which goals are refused.
@@ -42,6 +46,7 @@ class SafetyLimits:
     """
 
     max_step_deg: float = 5.0
+    max_speed_deg_s: float | None = None
     limit_margin_deg: float = 1.0
     temp_warn_c: float = 55.0
     temp_max_c: float = 70.0
@@ -51,6 +56,8 @@ class SafetyLimits:
     def __post_init__(self) -> None:
         if self.max_step_deg <= 0:
             raise ConfigurationError("max_step_deg must be positive")
+        if self.max_speed_deg_s is not None and self.max_speed_deg_s <= 0:
+            raise ConfigurationError("max_speed_deg_s must be positive")
         if self.limit_margin_deg < 0:
             raise ConfigurationError("limit_margin_deg must be non-negative")
         if not self.temp_warn_c < self.temp_max_c:
@@ -59,6 +66,25 @@ class SafetyLimits:
             raise ConfigurationError("voltage_min_v must be positive")
         if self.max_consecutive_failures < 1:
             raise ConfigurationError("max_consecutive_failures must be at least 1")
+
+    def step_for(self, hz: float) -> float:
+        """Per-tick step limit in degrees for a loop running at ``hz``.
+
+        Args:
+            hz: Control frequency in hertz.
+
+        Returns:
+            ``min(max_step_deg, max_speed_deg_s / hz)`` when a speed ceiling is configured,
+            otherwise ``max_step_deg``.
+
+        Raises:
+            ConfigurationError: If ``hz`` is not positive.
+        """
+        if hz <= 0:
+            raise ConfigurationError("hz must be positive")
+        if self.max_speed_deg_s is None:
+            return self.max_step_deg
+        return min(self.max_step_deg, self.max_speed_deg_s / hz)
 
     def derate(self, temperature_c: Sequence[int]) -> float:
         """Speed factor in ``(0.25, 1.0]`` from the hottest motor.
@@ -129,6 +155,7 @@ def apply_guards(
     calibration: Calibration,
     model: RobotModel,
     limits: SafetyLimits,
+    step_deg: float | None = None,
 ) -> SafetyReport:
     """Apply every guard to ``goal_deg``.
 
@@ -138,6 +165,8 @@ def apply_guards(
         calibration: Joint calibration, used for the soft limits.
         model: Arm model, for joint names.
         limits: Guard thresholds.
+        step_deg: Per-tick step limit override, normally ``limits.step_for(hz)`` so that a
+            speed ceiling is honoured at the loop's actual rate.
 
     Returns:
         A :class:`SafetyReport` with the goal that may be sent.
@@ -155,7 +184,10 @@ def apply_guards(
         )
 
     derate = limits.derate(state.temperature_c)
-    max_step = limits.max_step_deg * derate
+    base_step = limits.max_step_deg if step_deg is None else step_deg
+    if base_step <= 0:
+        raise ConfigurationError("step_deg must be positive")
+    max_step = base_step * derate
     reasons: list[str] = []
     clipped = False
     out: list[float] = []

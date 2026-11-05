@@ -228,3 +228,31 @@ def test_factory_auto_falls_back_to_scs(monkeypatch: pytest.MonkeyPatch, stub: S
     monkeypatch.setattr(bus_pkg, "_rustypot_available", lambda: True)
     monkeypatch.setattr("pysoarm.bus.rustypot.require_rustypot", lambda module=None: stub)
     assert isinstance(make_bus("/dev/fake", (1, 2), backend="auto"), RustypotBus)
+
+
+def test_status_errors_are_retried_like_the_scs_backend(bus: RustypotBus, stub: StubModule) -> None:
+    stub.buses[0].status[2] = 0x04
+    with pytest.raises(CommunicationError) as excinfo:
+        bus.read(2, "present_position")
+    error = excinfo.value
+    assert error.status == 0x04
+    assert error.flags == frozenset({"overheat"})
+    assert error.attempts == 3  # the default retries=2 applies to status alarms too
+    assert len([call for call in stub.buses[0].calls if call[0] == "read"]) == 3
+
+
+def test_status_retry_can_be_disabled(stub: StubModule) -> None:
+    bus = RustypotBus("/dev/fake", retries=2, retry_status=False, rustypot_module=stub)
+    bus.open()
+    stub.buses[0].status[2] = 0x04
+    with pytest.raises(CommunicationError):
+        bus.read(2, "present_position")
+    assert len([call for call in stub.buses[0].calls if call[0] == "read"]) == 1
+
+
+def test_per_call_retry_override_is_honoured(stub: StubModule) -> None:
+    bus = RustypotBus("/dev/fake", retries=0, rustypot_module=stub)
+    bus.open()
+    stub.buses[0].raise_on_next = "Operation timed out"
+    assert bus.read(1, "present_position", retries=1) == 2048
+    assert len([call for call in stub.buses[0].calls if call[0] == "read"]) == 2

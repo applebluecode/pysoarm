@@ -71,7 +71,10 @@ class RustypotBus:
         servo_model: rustypot servo model name, ``"sts3215"`` for SO-100/SO-101.
         baudrate: Bus speed; the STS3215 factory default is 1 Mbaud.
         timeout_s: Per-transaction timeout in seconds.
-        retries: Extra attempts per transaction (handled inside rustypot).
+        retries: Extra attempts per transaction (handled here, not inside rustypot).
+        retry_status: Retry transactions whose status byte carries an alarm bit. The SCS
+            backend has always done this; keeping the default ``True`` makes the two
+            backends interchangeable. Set ``False`` for fail-fast diagnostics.
         rustypot_module: Injection seam for tests; defaults to importing ``rustypot``.
 
     Raises:
@@ -87,6 +90,7 @@ class RustypotBus:
         baudrate: int = DEFAULT_BAUDRATE,
         timeout_s: float = DEFAULT_TIMEOUT_S,
         retries: int = DEFAULT_RETRIES,
+        retry_status: bool = True,
         rustypot_module: Any | None = None,
     ) -> None:
         if baudrate <= 0:
@@ -105,10 +109,16 @@ class RustypotBus:
         self._baudrate = baudrate
         self._timeout_s = timeout_s
         self._retries = retries
+        self._retry_status = retry_status
         self._definitions: dict[int, Any] = dict.fromkeys(self._motor_ids, self._definition)
         self._bus: Any | None = None
 
     # -- lifecycle --------------------------------------------------------- #
+    @property
+    def backend(self) -> str:
+        """This transport's name (``"rustypot"``)."""
+        return "rustypot"
+
     @property
     def is_open(self) -> bool:
         """Whether the rustypot bus is open."""
@@ -173,7 +183,7 @@ class RustypotBus:
             raise ConfigurationError(f"rustypot: {exc}") from exc
         except (RuntimeError, OSError) as exc:  # timeout / bus failure
             raise CommunicationError(
-                f"rustypot: {exc}", motor_id=motor_id, register=register
+                f"rustypot: {exc}", motor_id=motor_id, register=register, transient=True
             ) from exc
 
     def _retrying(
@@ -182,42 +192,69 @@ class RustypotBus:
         *,
         motor_id: int | None = None,
         register: str | None = None,
+        retries: int | None = None,
     ) -> _T:
         """Call rustypot with rustypot's own retries disabled, retrying here instead.
 
         Retrying at this layer (not inside rustypot) keeps the semantics identical to
         :class:`~pysoarm.bus.scs.ScsBus`, including for intermittent parse errors, and avoids
-        squaring the attempt count. Status-packet alarms are *not* retried by callers.
+        squaring the attempt count.
         """
+        attempts = (self._retries if retries is None else retries) + 1
+        if attempts < 1:
+            raise ConfigurationError("retries must be non-negative")
         last: CommunicationError | None = None
-        for _ in range(self._retries + 1):
+        for attempt in range(1, attempts + 1):
             try:
                 return self._call(action, motor_id=motor_id, register=register)
             except CommunicationError as exc:
                 last = exc
+                exc.attempts = attempt
         assert last is not None  # the loop runs at least once
         raise last
 
+    @staticmethod
+    def _raise_for_status(value: int, status: int, motor_id: int, register: str) -> int:
+        if status:
+            raise CommunicationError(
+                f"Motor {motor_id} reported status 0x{status:02x} for {register}",
+                motor_id=motor_id,
+                register=register,
+                status=status,
+                transient=True,
+            )
+        return int(value)
+
     # -- register access --------------------------------------------------- #
-    def read(self, motor_id: int, register: str) -> int:
+    def read(self, motor_id: int, register: str, *, retries: int | None = None) -> int:
         """Read one register of one motor."""
         reg = get_register(register)
         mid = self._validate_id(motor_id)
         bus = self._require_bus()
-        value, status = self._retrying(
-            lambda: bus.read_register_with_error(mid, reg.name, retries=0),
-            motor_id=mid,
-            register=reg.name,
-        )
-        if status:
-            raise CommunicationError(
-                f"Motor {mid} reported status 0x{status:02x} for {reg.name}",
-                motor_id=mid,
-                register=reg.name,
-            )
-        return int(value)
 
-    def write(self, motor_id: int, register: str, value: int) -> None:
+        if self._retry_status:
+
+            def action() -> int:
+                value, status = bus.read_register_with_error(mid, reg.name, retries=0)
+                return self._raise_for_status(value, status, mid, reg.name)
+
+            return self._retrying(action, motor_id=mid, register=reg.name, retries=retries)
+
+        def read_once() -> tuple[int, int]:
+            result: tuple[int, int] = bus.read_register_with_error(mid, reg.name, retries=0)
+            return result
+
+        value, status = self._retrying(read_once, motor_id=mid, register=reg.name, retries=retries)
+        return self._raise_for_status(value, status, mid, reg.name)
+
+    def write(
+        self,
+        motor_id: int,
+        register: str,
+        value: int,
+        *,
+        retries: int | None = None,
+    ) -> None:
         """Write one register of one motor."""
         reg = get_register(register)
         if not reg.writable:
@@ -228,31 +265,53 @@ class RustypotBus:
             lambda: bus.write_register(mid, reg.name, int(value), retries=0),
             motor_id=mid,
             register=reg.name,
+            retries=retries,
         )
 
-    def sync_read(self, motor_ids: Sequence[int], register: str) -> dict[int, int]:
+    def sync_read(
+        self,
+        motor_ids: Sequence[int],
+        register: str,
+        *,
+        retries: int | None = None,
+    ) -> dict[int, int]:
         """Read one register from several motors in one rustypot batch."""
         reg = get_register(register)
         ids = [self._validate_id(mid) for mid in dict.fromkeys(motor_ids)]
         if not ids:
             return {}
         bus = self._require_bus()
-        pairs = self._retrying(
-            lambda: bus.sync_read_register_with_error(ids, reg.name, retries=0),
-            register=reg.name,
-        )
-        results: dict[int, int] = {}
+
+        if self._retry_status:
+
+            def action() -> dict[int, int]:
+                pairs = bus.sync_read_register_with_error(ids, reg.name, retries=0)
+                results: dict[int, int] = {}
+                for mid, (value, status) in zip(ids, pairs, strict=True):
+                    results[mid] = self._raise_for_status(value, status, mid, reg.name)
+                return results
+
+            return self._retrying(action, register=reg.name, retries=retries)
+
+        def sync_read_once() -> list[tuple[int, int]]:
+            result: list[tuple[int, int]] = bus.sync_read_register_with_error(
+                ids, reg.name, retries=0
+            )
+            return result
+
+        pairs = self._retrying(sync_read_once, register=reg.name, retries=retries)
+        results = {}
         for mid, (value, status) in zip(ids, pairs, strict=True):
-            if status:
-                raise CommunicationError(
-                    f"Motor {mid} reported status 0x{status:02x} for {reg.name}",
-                    motor_id=mid,
-                    register=reg.name,
-                )
-            results[mid] = int(value)
+            results[mid] = self._raise_for_status(value, status, mid, reg.name)
         return results
 
-    def sync_write(self, register: str, values: Mapping[int, int]) -> None:
+    def sync_write(
+        self,
+        register: str,
+        values: Mapping[int, int],
+        *,
+        retries: int | None = None,
+    ) -> None:
         """Write one register of several motors in one rustypot sync-write group."""
         reg = get_register(register)
         if not reg.writable:
@@ -266,6 +325,7 @@ class RustypotBus:
                 ids, reg.name, [int(v) for v in values.values()], retries=0
             ),
             register=reg.name,
+            retries=retries,
         )
 
     # -- convenience ------------------------------------------------------- #

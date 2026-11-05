@@ -9,6 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [0.1.1] - 2026-11-05
+
+Reliability, calibration and diagnostics: the follow-up to the first hardware report.
+
+### Added
+
+- **Error classification** (`CommunicationError`): structured `motor_id`, `register`,
+  `status`, `transient`, `attempts` and a decoded `flags` set (`voltage`, `sensor`,
+  `overheat`, `overcurrent`, `angle`, `overload`). Status alarms are now retried by both
+  backends (`RustypotBus(retry_status=False)` opts out), and every `Bus` call accepts a
+  per-call `retries=` override.
+- **Low-latency loop primitives**: `run_control_loop(read_state_every=..., health_period_s=...)`,
+  per-tick latency (`mean/p95/max`), `deadline_misses`, `errors` and
+  `consecutive_errors_max` on `LoopStats`, plus `LoopStats.as_dict()`.
+- **Error policies** for the loop: `on_error="abort" | "hold" | "skip"` with
+  `max_consecutive_errors`, so a lost frame no longer ends a session (P0-1/P1-2).
+- **Public calibration flow** (`pysoarm.calibration`): `read_calibration`,
+  `write_calibration`, `reset_calibration`, `set_half_turn_homings`, `record_ranges`,
+  `calibrate`, with the Feetech `position - 2047` convention and `wrist_roll` full-turn
+  handling. New CLI: `pysoarm calibrate`, `pysoarm calibration show|export`.
+- **Safety surface**: `emergency_stop()` (keeps the connection), `enable/disable(joints)`,
+  `is_enabled()`, `reset_faults()`, and the documented `stop`/`emergency_stop`/`hold`
+  semantics.
+- **Roles**: `SOArm(role="leader")` is a read-only arm: torque stays off, no goal is
+  written, and only readability registers are configured.
+- **Diagnostics**: `SOArm.health()` returns structured `MotorHealth` (voltage,
+  temperature, current, latched/derived flags), `ArmState.health_age_s`, and
+  `pysoarm doctor --stress SECONDS` reports per-motor timeouts, status alarms, latency and
+  low-voltage/hot-motor warnings.
+- **Tuning**: `SafetyLimits.max_speed_deg_s` + `limits.step_for(hz)` decouple the step
+  guard from the loop rate; `set_speed_scale()`, `motor_config()` and
+  `set_motor_config()` expose the tuning registers.
+- **Gripper**: a thin `arm.gripper` facade (`open/close/move(percent)/hold/homing`); force
+  remains servo-limited, not closed-loop.
+- **Examples**: all six now runnable offline with `--fake`; CI smoke-tests them.
+- **Tests**: 259 offline tests (was 207), covering status retry parity, calibration flow,
+  roles, the safety surface, loop policies/latency, diagnostics, CLI commands and examples.
+
 ## [0.1.0] - 2026-11-04
 
 First public release: the device layer for one SO-100/SO-101 arm.

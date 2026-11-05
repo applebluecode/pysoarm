@@ -27,6 +27,9 @@ def test_parser_exposes_every_command() -> None:
         "read",
         "monitor",
         "hold",
+        "calibrate",
+        "calibration",
+        "bench",
         "doctor",
         "pose",
         "ik",
@@ -285,3 +288,88 @@ def test_ik_accepts_orientation_and_seed(
     ]
     assert main(args) == 0
     assert capsys.readouterr().out.strip() == "10.00    20.00"
+
+
+# --------------------------------------------------------------------------- #
+# 0.1.1 commands: calibration inspection, bench and the stress doctor
+# --------------------------------------------------------------------------- #
+def test_calibration_show_json(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bus = FakeBus()
+    for mid in bus.motor_ids:
+        bus.set_register(mid, "min_position_limit", 800)
+        bus.set_register(mid, "max_position_limit", 3200)
+    monkeypatch.setattr(cli_main, "_make_bus", lambda args: bus)
+    assert main(["calibration", "show", "--port", "/dev/fake", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["shoulder_pan"]["range_min"] == 800
+    assert len(payload) == 6
+
+
+def test_calibration_export_writes_a_lerobot_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bus = FakeBus()
+    for mid in bus.motor_ids:
+        bus.set_register(mid, "min_position_limit", 800)
+        bus.set_register(mid, "max_position_limit", 3200)
+    monkeypatch.setattr(cli_main, "_make_bus", lambda args: bus)
+    output = tmp_path / "export.json"
+    assert main(["calibration", "export", "--port", "/dev/fake", "--output", str(output)]) == 0
+    assert json.loads(output.read_text())["gripper"]["range_max"] == 3200
+    assert "wrote" in capsys.readouterr().out
+
+
+def test_calibration_export_needs_an_output(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bus = FakeBus()
+    for mid in bus.motor_ids:
+        bus.set_register(mid, "min_position_limit", 800)
+        bus.set_register(mid, "max_position_limit", 3200)
+    monkeypatch.setattr(cli_main, "_make_bus", lambda args: bus)
+    assert main(["calibration", "export", "--port", "/dev/fake"]) == EXIT_USAGE
+    assert "--output" in capsys.readouterr().err
+
+
+def test_bench_reports_read_write_and_loop(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli_main, "_make_bus", lambda args: ready_bus())
+    args = [
+        "bench",
+        "--port",
+        "/dev/fake",
+        "--samples",
+        "5",
+        "--seconds",
+        "0.01",
+        "--hz",
+        "200",
+        "--json",
+    ]
+    assert main(args) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["backend"] == "fake"
+    assert payload["read"]["mean_ms"] >= 0
+    assert payload["loop"]["ticks"] >= 1
+
+
+def test_bench_rejects_non_positive_arguments(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["bench", "--port", "/dev/fake", "--seconds", "0"]) == EXIT_USAGE
+    assert "positive" in capsys.readouterr().err
+
+
+def test_doctor_stress_reports_electrical_health(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli_main, "_make_bus", lambda args: ready_bus())
+    monkeypatch.setattr(cli_main, "_service_active", lambda name: False)
+    monkeypatch.setattr(cli_main, "_port_holders", lambda path: [])
+    code = main(["doctor", "--port", "/dev/null", "--stress", "0.01"])
+    captured = capsys.readouterr().out
+    assert code == 0
+    assert "backend fake" in captured
+    assert "no read timeouts" in captured
+    assert "rustypot available" in captured

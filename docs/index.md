@@ -7,11 +7,13 @@ robot arm: six Feetech **STS3215** serial-bus servos on a single 1 Mbaud TTL bus
 stack. The ergonomics follow `pylibfranka` / `pyAgxArm` (`connect()` → `read_once()` →
 `write_goal()` / control loop) within what position-servo hardware can actually do.
 
-!!! note "Version 0.1.0"
-    Transport (`scs` and the optional `rustypot` backend), calibration, safety, trajectories,
-    Cartesian kinematics, `SOArm`, the `ArmBridge`/ROS 2 adapter and the CLI are implemented.
-    What is *not* here is by design: teleoperation, dataset recording and policies
-    ([ADR 0001](adr/0001-scope-device-layer.md)). See `CHANGELOG.md` for the full list.
+!!! note "Version 0.1.1"
+    Transport (`scs` and the optional `rustypot` backend), the motor-side calibration flow,
+    safety, trajectories, Cartesian kinematics, `SOArm` (follower and read-only leader),
+    diagnostics (`health()`, `doctor --stress`), the `ArmBridge`/ROS 2 adapter and the CLI are
+    implemented. What is *not* here is by design: teleoperation, dataset recording and
+    policies ([ADR 0001](adr/0001-scope-device-layer.md)). See `CHANGELOG.md` for the full
+    list.
 
 ## Design targets
 

@@ -6,10 +6,15 @@ Sub-commands::
     pysoarm read    --port ... --json               # one snapshot, machine readable
     pysoarm monitor --port ... --hz 5               # live positions/temps/voltages
     pysoarm hold    --port ... --yes                # enable torque, hold the current pose
-    pysoarm doctor  --port ...                      # port, permissions, other holders, ModemManager
+    pysoarm calibrate --port ... --role follower    # motor-side calibration flow
+    pysoarm calibration show --port ...             # print the calibration stored in the motors
+    pysoarm calibration export --port ... --output f.json
+    pysoarm bench   --port ... --seconds 5          # read/write latency and loop overruns
+    pysoarm doctor  --port ... [--stress 3]         # environment + electrical self-check
 
 ``doctor`` exists because the two most common failures are environmental: another process
 (a suspended ``lerobot-*``) holding the tty, and ``ModemManager`` probing ``/dev/ttyACM*``.
+With ``--stress`` it also reports per-motor timeouts, status bits and voltage/temperature.
 """
 
 from __future__ import annotations
@@ -17,10 +22,13 @@ from __future__ import annotations
 import argparse
 import contextlib
 import importlib
+import importlib.util
 import json
+import math
 import os
 import shutil
 import stat
+import statistics
 import subprocess
 import sys
 import time
@@ -32,18 +40,21 @@ from pysoarm._version import __version__
 from pysoarm.arm import SOArm
 from pysoarm.bus import BACKENDS, make_bus
 from pysoarm.bus.base import Bus
+from pysoarm.calibration import calibrate, read_calibration
 from pysoarm.exceptions import ConfigurationError, PysoarmError
 from pysoarm.kinematics.base import Kinematics, Pose
-from pysoarm.models.base import get_model
+from pysoarm.models.base import RobotModel, get_model
 
 __all__ = ["EXIT_ERROR", "EXIT_OK", "EXIT_USAGE", "build_parser", "main"]
 
 EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_USAGE = 2
+#: Temperature above which ``doctor --stress`` warns, in degrees Celsius.
+_HOT_MOTOR_C = 60.0
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - one declarative table
     """Build the argument parser (kept separate so tests can inspect it)."""
     parser = argparse.ArgumentParser(
         prog="pysoarm",
@@ -62,8 +73,8 @@ def build_parser() -> argparse.ArgumentParser:
         target.add_argument(
             "--backend",
             choices=BACKENDS,
-            default="scs",
-            help="transport: scs (default), rustypot (needs the extra) or auto",
+            default="auto",
+            help="transport: auto (default: rustypot if installed, else scs), scs or rustypot",
         )
         if needs_calibration:
             target.add_argument(
@@ -120,8 +131,50 @@ def build_parser() -> argparse.ArgumentParser:
     ik.add_argument("--seed", default=None, help="IK seed joint values in degrees")
     ik.add_argument("--json", action="store_true", help="machine-readable output")
 
+    calibrate_cmd = sub.add_parser("calibrate", help="run the motor-side calibration flow")
+    add_common(calibrate_cmd, needs_calibration=False)
+    calibrate_cmd.add_argument("--role", choices=("follower", "leader"), default="follower")
+    calibrate_cmd.add_argument("--id", default=None, help="default output name (id.json)")
+    calibrate_cmd.add_argument("--output", default=None, help="also write this JSON file")
+    calibrate_cmd.add_argument(
+        "--full-turn",
+        action="store_true",
+        help="use the recorded range for wrist_roll instead of forcing 0..4095",
+    )
+
+    calibration = sub.add_parser("calibration", help="inspect or export the motor calibration")
+    calibration.add_argument("action", choices=("show", "export"))
+    add_common(calibration, needs_calibration=False)
+    calibration.add_argument("--output", default=None, help="destination JSON for 'export'")
+    calibration.add_argument("--json", action="store_true", help="machine-readable output")
+
+    bench = sub.add_parser("bench", help="measure read/write latency and loop overruns")
+    add_common(bench, needs_calibration=False)
+    bench.add_argument("--seconds", type=float, default=2.0, help="loop duration (default: 2)")
+    bench.add_argument("--hz", type=float, default=200.0, help="loop rate (default: 200)")
+    bench.add_argument("--samples", type=int, default=200, help="read/write samples (default: 200)")
+    bench.add_argument("--json", action="store_true", help="machine-readable output")
+
     doctor = sub.add_parser("doctor", help="diagnose the environment for a port")
     doctor.add_argument("--port", required=True, help="serial device to inspect")
+    doctor.add_argument("--model", default="so101", help="arm model (default: so101)")
+    doctor.add_argument("--baudrate", type=int, default=None, help="override the baudrate")
+    doctor.add_argument(
+        "--backend", choices=BACKENDS, default="auto", help="transport for --stress"
+    )
+    doctor.add_argument(
+        "--stress",
+        type=float,
+        default=0.0,
+        metavar="SECONDS",
+        help="also probe every motor for this many seconds (0 = off)",
+    )
+    doctor.add_argument(
+        "--min-voltage",
+        type=float,
+        default=5.0,
+        help="warn below this supply voltage (default: 5.0 V)",
+    )
 
     return parser
 
@@ -255,6 +308,180 @@ def _cmd_hold(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _percentile(values: list[float], fraction: float) -> float:
+    """Nearest-rank percentile (``0.0`` for an empty list)."""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, max(0, math.ceil(fraction * len(ordered)) - 1))
+    return ordered[index]
+
+
+def _latency_summary(samples: list[float]) -> dict[str, float]:
+    """Mean/p50/p95/max in milliseconds from second samples."""
+    scale = 1e3
+    return {
+        "mean_ms": statistics.fmean(samples) * scale if samples else 0.0,
+        "p50_ms": _percentile(samples, 0.50) * scale,
+        "p95_ms": _percentile(samples, 0.95) * scale,
+        "max_ms": max(samples, default=0.0) * scale,
+    }
+
+
+def _cmd_calibrate(args: argparse.Namespace) -> int:
+    model = get_model(args.model)
+    bus = _make_bus(args)
+    with bus:
+        calibration = calibrate(
+            bus,
+            model,
+            role=args.role,
+            full_turn=args.full_turn,
+            input_fn=lambda prompt: input(prompt) if sys.stdin.isatty() else "",
+        )
+    print(f"calibrated {model.name} ({args.role}); {len(calibration.joints)} joints")
+    for joint, cal in calibration.joints.items():
+        print(
+            f"  {joint:<14} id={cal.motor_id} range=[{cal.range_min}, {cal.range_max}] "
+            f"homing_offset={cal.homing_offset}"
+        )
+    output = args.output or (f"{args.id}.json" if args.id else None)
+    if output is not None:
+        written = calibration.to_json(output)
+        print(f"wrote {written}")
+    return EXIT_OK
+
+
+def _cmd_calibration(args: argparse.Namespace) -> int:
+    model = get_model(args.model)
+    bus = _make_bus(args)
+    with bus:
+        calibration = read_calibration(bus, model)
+    if args.action == "export":
+        if args.output is None:
+            _print_error("calibration export needs --output PATH")
+            return EXIT_USAGE
+        written = calibration.to_json(args.output)
+        print(f"wrote {written}")
+        return EXIT_OK
+    if args.json:
+        print(json.dumps(calibration.to_dict(), indent=2))
+        return EXIT_OK
+    print(f"{'joint':<14} {'id':>3} {'min':>5} {'max':>5} {'offset':>7} {'drive':>5}")
+    for joint, cal in calibration.joints.items():
+        print(
+            f"{joint:<14} {cal.motor_id:>3} {cal.range_min:>5} {cal.range_max:>5} "
+            f"{cal.homing_offset:>7} {cal.drive_mode:>5}"
+        )
+    return EXIT_OK
+
+
+def _cmd_bench(args: argparse.Namespace) -> int:
+    if args.seconds <= 0 or args.hz <= 0 or args.samples <= 0:
+        _print_error("--seconds, --hz and --samples must be positive")
+        return EXIT_USAGE
+    model = get_model(args.model)
+    ids = model.motor_ids
+    bus = _make_bus(args)
+    reads: list[float] = []
+    writes: list[float] = []
+    with bus:
+        positions = bus.sync_read(ids, "present_position")
+        for _ in range(args.samples):
+            started = time.perf_counter()
+            positions = bus.sync_read(ids, "present_position")
+            reads.append(time.perf_counter() - started)
+            started = time.perf_counter()
+            bus.sync_write("goal_position", {mid: positions[mid] for mid in ids})
+            writes.append(time.perf_counter() - started)
+
+        period = 1.0 / args.hz
+        started = time.perf_counter()
+        ticks = 0
+        overruns = 0
+        while True:
+            elapsed = time.perf_counter() - started
+            if elapsed >= args.seconds:
+                break
+            positions = bus.sync_read(ids, "present_position")
+            bus.sync_write("goal_position", positions)
+            deadline = started + (ticks + 1) * period
+            slack = deadline - time.perf_counter()
+            if slack > 0:
+                time.sleep(slack)
+            else:
+                overruns += 1
+            ticks += 1
+        loop_elapsed = time.perf_counter() - started
+
+    report = {
+        "port": args.port,
+        "backend": bus.backend,
+        "read": _latency_summary(reads),
+        "write": _latency_summary(writes),
+        "loop": {
+            "hz": args.hz,
+            "ticks": ticks,
+            "overruns": overruns,
+            "elapsed_s": loop_elapsed,
+            "mean_hz": ticks / loop_elapsed if loop_elapsed > 0 else 0.0,
+        },
+    }
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        read, write, loop = report["read"], report["write"], report["loop"]
+        print(f"backend {report['backend']}")
+        print(
+            f"read6   mean {read['mean_ms']:.2f} ms  p50 {read['p50_ms']:.2f}  "
+            f"p95 {read['p95_ms']:.2f}  max {read['max_ms']:.2f}"
+        )
+        print(
+            f"write6  mean {write['mean_ms']:.2f} ms  p50 {write['p50_ms']:.2f}  "
+            f"p95 {write['p95_ms']:.2f}  max {write['max_ms']:.2f}"
+        )
+        print(
+            f"loop    {loop['hz']:.0f} Hz target, {loop['mean_hz']:.1f} Hz actual, "
+            f"{loop['ticks']} ticks, {loop['overruns']} overruns"
+        )
+    return EXIT_OK
+
+
+def _stress(
+    bus: Bus,
+    model: RobotModel,
+    *,
+    seconds: float,
+    min_voltage: float,
+    clock: Callable[[], float] = time.monotonic,
+) -> tuple[list[str], dict[int, int], dict[int, set[str]], dict[str, float]]:
+    """Probe every motor individually for ``seconds`` and summarise the failures."""
+    ids = model.motor_ids
+    volts = bus.sync_read(ids, "present_voltage")
+    temps = bus.sync_read(ids, "present_temperature")
+    warnings: list[str] = []
+    for mid in ids:
+        voltage = volts[mid] * 0.1
+        if voltage < min_voltage:
+            warnings.append(f"motor {mid}: {voltage:.1f} V is below {min_voltage:.1f} V")
+        if temps[mid] >= _HOT_MOTOR_C:
+            warnings.append(f"motor {mid}: {temps[mid]} C is hot")
+    timeouts: dict[int, int] = dict.fromkeys(ids, 0)
+    flags: dict[int, set[str]] = {mid: set() for mid in ids}
+    samples: list[float] = []
+    deadline = clock() + seconds
+    while clock() < deadline:
+        for mid in ids:
+            started = clock()
+            try:
+                bus.read(mid, "present_position", retries=0)
+            except PysoarmError as exc:
+                timeouts[mid] += 1
+                flags[mid].update(getattr(exc, "flags", set()))
+            samples.append(clock() - started)
+    return warnings, timeouts, flags, _latency_summary(samples)
+
+
 def _port_holders(path: Path) -> list[str]:
     """Processes holding ``path`` open (best effort, Linux only)."""
     holders: list[str] = []
@@ -323,6 +550,60 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
                 False,
             )
         )
+    rules = Path("/etc/udev/rules.d/99-pysoarm.rules")
+    checks.append(
+        (
+            "udev rules installed",
+            rules.is_file(),
+            str(rules) if rules.is_file() else "run scripts/install_udev_rules.sh",
+            False,
+        )
+    )
+    rustypot = importlib.util.find_spec("rustypot") is not None
+    checks.append(
+        (
+            "rustypot available",
+            rustypot,
+            "installed" if rustypot else 'pip install "pysoarm[rustypot]"',
+            False,
+        )
+    )
+
+    if args.stress > 0:
+        model = get_model(args.model)
+        try:
+            bus = _make_bus(args)
+            with bus:
+                warnings, timeouts, flags, latency = _stress(
+                    bus, model, seconds=args.stress, min_voltage=args.min_voltage
+                )
+        except PysoarmError as exc:
+            checks.append(("bus probe", False, str(exc), False))
+        else:
+            wired = [mid for mid, count in timeouts.items() if count]
+            checks.append(
+                (
+                    "no read timeouts",
+                    not wired,
+                    ", ".join(f"{mid}: {timeouts[mid]}" for mid in wired) or "clean",
+                    False,
+                )
+            )
+            checks.append(
+                (
+                    "no status alarms",
+                    not any(flags.values()),
+                    ", ".join(f"{mid}: {sorted(flags[mid])}" for mid in flags if flags[mid])
+                    or "clean",
+                    False,
+                )
+            )
+            print(
+                f"info backend {bus.backend}; read latency "
+                f"mean {latency['mean_ms']:.2f} ms p95 {latency['p95_ms']:.2f} ms"
+            )
+            for warning in warnings:
+                print(f"warn {warning}")
 
     for name, ok, detail, fatal in checks:
         status = "ok  " if ok else ("FAIL" if fatal else "warn")
@@ -372,6 +653,9 @@ _HANDLERS = {
     "read": _cmd_read,
     "monitor": _cmd_monitor,
     "hold": _cmd_hold,
+    "calibrate": _cmd_calibrate,
+    "calibration": _cmd_calibration,
+    "bench": _cmd_bench,
     "doctor": _cmd_doctor,
     "pose": _cmd_pose,
     "ik": _cmd_ik,

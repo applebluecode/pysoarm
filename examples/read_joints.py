@@ -1,13 +1,35 @@
 """Read one snapshot from the arm and print it.
 
-Intended output::
+Run without hardware::
 
-    q_deg     [ 12.3  -45.6   78.9    3.4   102.1   30.2]
-    temp_c    [  34    35     33      35     36      36]
-    voltage_v  11.9
-    read took 1.0 ms
+    python examples/read_joints.py --fake
 """
 
 from __future__ import annotations
 
-raise NotImplementedError("example lands with the 0.1.0 implementation")
+import argparse
+import time
+
+from _common import add_connection_args, open_arm
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_connection_args(parser)
+    args = parser.parse_args()
+    arm = open_arm(args)
+    try:
+        started = time.perf_counter()
+        state = arm.read_once(health=True)
+        elapsed_ms = (time.perf_counter() - started) * 1e3
+        print("q_deg    ", [round(value, 2) for value in state.q_deg])
+        print("temp_c   ", list(state.temperature_c))
+        print("voltage_v", [round(value, 1) for value in state.voltage_v])
+        print(f"read took {elapsed_ms:.2f} ms")
+    finally:
+        arm.stop()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
