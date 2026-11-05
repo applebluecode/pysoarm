@@ -8,9 +8,11 @@ from pathlib import Path
 
 import pytest
 
-import pysoarm.cli.main as cli_main
 from pysoarm.arm import SOArm
 from pysoarm.bus.fake import FakeBus
+from pysoarm.cli import factories
+from pysoarm.cli.commands import diagnostics
+from pysoarm.cli.commands import kinematics as kinematics_commands
 from pysoarm.cli.main import EXIT_ERROR, EXIT_USAGE, build_parser, main
 from pysoarm.exceptions import ConfigurationError
 from pysoarm.kinematics import Pose
@@ -83,7 +85,7 @@ def test_monitor_validates_the_rate() -> None:
 # --------------------------------------------------------------------------- #
 def fake_arm(monkeypatch: pytest.MonkeyPatch, bus: FakeBus) -> None:
     """Redirect the CLI's arm factory to an SOArm on the fake bus."""
-    monkeypatch.setattr(cli_main, "_make_arm", lambda args: SOArm(bus=bus))
+    monkeypatch.setattr(factories, "make_arm", lambda args: SOArm(bus=bus))
 
 
 def ready_bus() -> FakeBus:
@@ -99,7 +101,7 @@ def test_scan_prints_ids_and_models(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     bus = FakeBus(motor_ids=(1, 2), model_number=777)
-    monkeypatch.setattr(cli_main, "_make_bus", lambda args: bus)
+    monkeypatch.setattr(factories, "make_bus", lambda args: bus)
     assert main(["scan", "--port", "/dev/fake"]) == 0
     out = capsys.readouterr().out
     assert "1  777" in out
@@ -110,7 +112,7 @@ def test_scan_json_output(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     bus = FakeBus(motor_ids=(1,), model_number=777)
-    monkeypatch.setattr(cli_main, "_make_bus", lambda args: bus)
+    monkeypatch.setattr(factories, "make_bus", lambda args: bus)
     assert main(["scan", "--port", "/dev/fake", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload == {"port": "/dev/fake", "motors": {"1": 777}}
@@ -145,7 +147,7 @@ def test_hold_with_confirmation_runs_until_interrupted(
     def interrupt(_seconds: float) -> None:
         raise KeyboardInterrupt
 
-    monkeypatch.setattr("pysoarm.cli.main.time.sleep", interrupt)
+    monkeypatch.setattr("pysoarm.cli.commands.bus.time.sleep", interrupt)
     assert main(["hold", "--port", "/dev/fake", "--yes"]) == 0
     out = capsys.readouterr().out
     assert "holding 6 joints" in out
@@ -161,7 +163,7 @@ def test_monitor_prints_a_header_then_interrupts(
     def interrupt(_seconds: float) -> None:
         raise KeyboardInterrupt
 
-    monkeypatch.setattr("pysoarm.cli.main.time.sleep", interrupt)
+    monkeypatch.setattr("pysoarm.cli.commands.bus.time.sleep", interrupt)
     assert main(["monitor", "--port", "/dev/fake", "--hz", "10"]) == 0
     assert "shoulder_pan" in capsys.readouterr().out
 
@@ -169,10 +171,10 @@ def test_monitor_prints_a_header_then_interrupts(
 def test_doctor_warns_about_modemmanager_without_failing(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(cli_main, "_service_active", lambda name: True)
+    monkeypatch.setattr(diagnostics, "_service_active", lambda name: True)
     # /dev/null is held open by several daemons, so neutralise the holder scan here: this
     # test is about ModemManager being a warning, not about the holder check.
-    monkeypatch.setattr(cli_main, "_port_holders", lambda path: [])
+    monkeypatch.setattr(diagnostics, "_port_holders", lambda path: [])
     code = main(["doctor", "--port", "/dev/null"])  # a character device that exists
     captured = capsys.readouterr().out
     assert code == 0
@@ -210,16 +212,16 @@ class StubKinematics:
 
 
 def test_joint_list_parses_commas_and_spaces() -> None:
-    assert cli_main._joint_list("0, -30 60") == (0.0, -30.0, 60.0)
+    assert kinematics_commands._joint_list("0, -30 60") == (0.0, -30.0, 60.0)
     with pytest.raises(ConfigurationError, match="Cannot parse joint values"):
-        cli_main._joint_list("0, oops")
+        kinematics_commands._joint_list("0, oops")
 
 
 def test_pose_with_explicit_joints(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     stub = StubKinematics()
-    monkeypatch.setattr(cli_main, "_make_kinematics", lambda args: stub)
+    monkeypatch.setattr(factories, "make_kinematics", lambda args: stub)
     assert main(["pose", "--urdf", "arm.urdf", "--q", "0,0", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["joints_deg"] == [0.0, 0.0]
@@ -230,7 +232,7 @@ def test_pose_with_explicit_joints(
 def test_pose_human_readable_output(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(cli_main, "_make_kinematics", lambda args: StubKinematics())
+    monkeypatch.setattr(factories, "make_kinematics", lambda args: StubKinematics())
     assert main(["pose", "--urdf", "arm.urdf", "--q", "0,0"]) == 0
     out = capsys.readouterr().out
     assert "xyz_m" in out
@@ -240,7 +242,7 @@ def test_pose_human_readable_output(
 def test_pose_needs_joints_or_a_port(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(cli_main, "_make_kinematics", lambda args: StubKinematics())
+    monkeypatch.setattr(factories, "make_kinematics", lambda args: StubKinematics())
     assert main(["pose", "--urdf", "arm.urdf"]) == EXIT_USAGE
     assert "--q or --port" in capsys.readouterr().err
 
@@ -249,9 +251,9 @@ def test_pose_can_read_the_arm(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     stub = StubKinematics()
-    monkeypatch.setattr(cli_main, "_make_kinematics", lambda args: stub)
+    monkeypatch.setattr(factories, "make_kinematics", lambda args: stub)
     bus = ready_bus()
-    monkeypatch.setattr(cli_main, "_make_readonly_arm", lambda args: SOArm(bus=bus))
+    monkeypatch.setattr(factories, "make_readonly_arm", lambda args: SOArm(bus=bus))
     assert main(["pose", "--urdf", "arm.urdf", "--port", "/dev/fake", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert len(payload["joints_deg"]) == 6
@@ -261,7 +263,7 @@ def test_pose_can_read_the_arm(
 def test_ik_prints_the_solution(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(cli_main, "_make_kinematics", lambda args: StubKinematics())
+    monkeypatch.setattr(factories, "make_kinematics", lambda args: StubKinematics())
     assert main(["ik", "--urdf", "arm.urdf", "--xyz", "0.5", "0.5", "0.0", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["joints_deg"] == [10.0, 20.0]
@@ -270,7 +272,7 @@ def test_ik_prints_the_solution(
 def test_ik_accepts_orientation_and_seed(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(cli_main, "_make_kinematics", lambda args: StubKinematics())
+    monkeypatch.setattr(factories, "make_kinematics", lambda args: StubKinematics())
     args = [
         "ik",
         "--urdf",
@@ -300,7 +302,7 @@ def test_calibration_show_json(
     for mid in bus.motor_ids:
         bus.set_register(mid, "min_position_limit", 800)
         bus.set_register(mid, "max_position_limit", 3200)
-    monkeypatch.setattr(cli_main, "_make_bus", lambda args: bus)
+    monkeypatch.setattr(factories, "make_bus", lambda args: bus)
     assert main(["calibration", "show", "--port", "/dev/fake", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["shoulder_pan"]["range_min"] == 800
@@ -314,7 +316,7 @@ def test_calibration_export_writes_a_lerobot_file(
     for mid in bus.motor_ids:
         bus.set_register(mid, "min_position_limit", 800)
         bus.set_register(mid, "max_position_limit", 3200)
-    monkeypatch.setattr(cli_main, "_make_bus", lambda args: bus)
+    monkeypatch.setattr(factories, "make_bus", lambda args: bus)
     output = tmp_path / "export.json"
     assert main(["calibration", "export", "--port", "/dev/fake", "--output", str(output)]) == 0
     assert json.loads(output.read_text())["gripper"]["range_max"] == 3200
@@ -328,7 +330,7 @@ def test_calibration_export_needs_an_output(
     for mid in bus.motor_ids:
         bus.set_register(mid, "min_position_limit", 800)
         bus.set_register(mid, "max_position_limit", 3200)
-    monkeypatch.setattr(cli_main, "_make_bus", lambda args: bus)
+    monkeypatch.setattr(factories, "make_bus", lambda args: bus)
     assert main(["calibration", "export", "--port", "/dev/fake"]) == EXIT_USAGE
     assert "--output" in capsys.readouterr().err
 
@@ -336,7 +338,7 @@ def test_calibration_export_needs_an_output(
 def test_bench_reports_read_write_and_loop(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(cli_main, "_make_bus", lambda args: ready_bus())
+    monkeypatch.setattr(factories, "make_bus", lambda args: ready_bus())
     args = [
         "bench",
         "--port",
@@ -364,9 +366,9 @@ def test_bench_rejects_non_positive_arguments(capsys: pytest.CaptureFixture[str]
 def test_doctor_stress_reports_electrical_health(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(cli_main, "_make_bus", lambda args: ready_bus())
-    monkeypatch.setattr(cli_main, "_service_active", lambda name: False)
-    monkeypatch.setattr(cli_main, "_port_holders", lambda path: [])
+    monkeypatch.setattr(factories, "make_bus", lambda args: ready_bus())
+    monkeypatch.setattr(diagnostics, "_service_active", lambda name: False)
+    monkeypatch.setattr(diagnostics, "_port_holders", lambda path: [])
     code = main(["doctor", "--port", "/dev/null", "--stress", "0.01"])
     captured = capsys.readouterr().out
     assert code == 0

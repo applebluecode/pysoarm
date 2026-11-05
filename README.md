@@ -109,15 +109,18 @@ leader = SOArm("/dev/so101_leader", role="leader", calibration="my_leader.json")
 ```
 src/pysoarm/          # the importable package (src layout)
   arm.py              # SOArm: high-level device object (pylibfranka-like surface)
+  loop.py             # fixed-rate loop timing, latency stats and error policy
+  diagnostics.py      # health cache, alarm latching and MotorHealth snapshots
+  tuning.py           # motor-config register read/write helpers
   state.py            # immutable ArmState snapshots
-  calibration.py      # LeRobot JSON, degrees <-> ticks, and the motor-side calibration flow
+  calibration/        # LeRobot JSON + data model, and the motor-side calibration flow
   gripper.py          # thin percent-of-travel facade over the sixth joint
   safety.py           # limits, guards, watchdog
   trajectory.py       # interpolators / ramps for move_to()
   bus/                # transport backends behind one Protocol (base, scs, rustypot, fake)
   models/             # per-arm descriptions (joint names, motor ids, directions)
   kinematics/         # optional FK/IK (placo) on top of a SO-101 URDF
-  cli/                # `pysoarm` command line entry point
+  cli/                # `pysoarm` entry point, parser and one module per command family
   devices/udev/       # udev rule for stable /dev/so101_* names
 tests/                # unit tests (hardware tests are opt-in)
 examples/             # runnable examples

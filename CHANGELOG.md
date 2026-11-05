@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Changed
+
+- Internal structural refactor, no public API or behaviour change: the control loop moved to
+  `pysoarm.loop`, health caching/tuning to `diagnostics.py`/`tuning.py`, calibration became a
+  `model` + `flow` package, and the CLI split into `parser.py`, `factories.py` and
+  `commands/`. Tests grew from 262 to 283 offline cases.
 
 ## [0.1.1] - 2026-11-05
 

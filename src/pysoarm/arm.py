@@ -23,13 +23,10 @@ Design rules:
 from __future__ import annotations
 
 import contextlib
-import math
-import statistics
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal
 
 from pysoarm.bus import Backend, make_bus
 from pysoarm.bus.base import Bus
@@ -47,8 +44,8 @@ from pysoarm.constants import (
     DEFAULT_TIMEOUT_S,
     OPERATING_MODE_POSITION,
     PHASE_KEEP_SINGLE_TURN,
-    VOLTAGE_LSB_V,
 )
+from pysoarm.diagnostics import HealthCache, build_health
 from pysoarm.exceptions import (
     BusConnectionError,
     CalibrationError,
@@ -58,137 +55,20 @@ from pysoarm.exceptions import (
 )
 from pysoarm.gripper import Gripper
 from pysoarm.kinematics.base import Kinematics, Pose
+from pysoarm.loop import ErrorPolicy, LoopStats, run_loop, validate_loop_options
 from pysoarm.models.base import RobotModel, get_model
 from pysoarm.safety import SafetyLimits, SafetyReport, apply_guards
 from pysoarm.state import ArmState, MotorHealth
 from pysoarm.trajectory import LinearRamp, MinimumJerk, Trajectory
+from pysoarm.tuning import read_motor_config, write_motor_config
 
-__all__ = ["LoopStats", "Role", "SOArm"]
+__all__ = ["ErrorPolicy", "LoopStats", "Role", "SOArm"]
 
 #: How the arm is used: a ``follower`` accepts goals and torque; a ``leader`` is read-only.
 Role = Literal["follower", "leader"]
-#: Error policies for :meth:`SOArm.run_control_loop`.
-ErrorPolicy = Literal["abort", "hold", "skip"]
 
 #: Extra settle time after a blocking move, so the reported state reflects the endpoint.
 _SETTLE_S = 0.02
-#: Health registers, refreshed one per tick when the cache goes stale. Spread over four ticks
-#: (~+0.36 ms each) so no single control tick pays for a full health read.
-_HEALTH_REGISTERS: tuple[str, ...] = (
-    "present_speed",
-    "present_current",
-    "present_temperature",
-    "present_voltage",
-)
-#: Registers returned by :meth:`SOArm.motor_config` and accepted by
-#: :meth:`SOArm.set_motor_config`.
-MOTOR_CONFIG_REGISTERS: tuple[str, ...] = (
-    "acceleration",
-    "maximum_acceleration",
-    "p_coefficient",
-    "i_coefficient",
-    "d_coefficient",
-    "torque_limit",
-    "protection_current",
-    "overload_torque",
-)
-
-
-@dataclass(frozen=True, slots=True)
-class LoopStats:
-    """Summary of a finished control loop.
-
-    Args:
-        ticks: Number of completed ticks (including ticks that ended in a handled error).
-        overruns: Ticks that could not be finished within the period. This is also the
-            number of missed deadlines: the loop keeps absolute deadlines, so a missed tick
-            is counted rather than hidden by shortening the next period.
-        elapsed_s: Wall-clock duration of the loop.
-        errors: Ticks that raised and were handled by a non-``abort`` error policy.
-        consecutive_errors_max: Longest run of consecutive failed ticks.
-        latencies_s: Per-tick command latency, measured from the callback's sampling instant
-            to the completed goal write. Only ticks that wrote a goal are recorded.
-
-    All derived values are computed on demand, so the object stays a cheap immutable record.
-    """
-
-    ticks: int
-    overruns: int
-    elapsed_s: float
-    errors: int = 0
-    consecutive_errors_max: int = 0
-    latencies_s: tuple[float, ...] = ()
-
-    @property
-    def mean_period_s(self) -> float:
-        """Average tick period in seconds (``0.0`` for an empty loop)."""
-        return self.elapsed_s / self.ticks if self.ticks else 0.0
-
-    @property
-    def mean_hz(self) -> float:
-        """Average tick rate in Hz (``0.0`` for an empty loop)."""
-        return 1.0 / self.mean_period_s if self.mean_period_s > 0 else 0.0
-
-    @property
-    def overrun_ratio(self) -> float:
-        """Fraction of ticks that overran their budget."""
-        return self.overruns / self.ticks if self.ticks else 0.0
-
-    @property
-    def deadline_misses(self) -> int:
-        """Alias for :attr:`overruns`, phrased as the real-time metric it is."""
-        return self.overruns
-
-    @property
-    def mean_latency_s(self) -> float:
-        """Mean tick latency in seconds (``0.0`` when no goal was written)."""
-        return statistics.fmean(self.latencies_s) if self.latencies_s else 0.0
-
-    def latency_percentile(self, fraction: float) -> float:
-        """Latency percentile in seconds.
-
-        Args:
-            fraction: ``0.0``..``1.0``; e.g. ``0.95`` for p95.
-
-        Returns:
-            The nearest-rank percentile, or ``0.0`` when no goal was written.
-
-        Raises:
-            ConfigurationError: If ``fraction`` is outside ``[0, 1]``.
-        """
-        if not 0.0 <= fraction <= 1.0:
-            raise ConfigurationError("fraction must be between 0 and 1")
-        if not self.latencies_s:
-            return 0.0
-        ordered = sorted(self.latencies_s)
-        index = min(len(ordered) - 1, max(0, math.ceil(fraction * len(ordered)) - 1))
-        return ordered[index]
-
-    @property
-    def p95_latency_s(self) -> float:
-        """95th-percentile tick latency in seconds."""
-        return self.latency_percentile(0.95)
-
-    @property
-    def max_latency_s(self) -> float:
-        """Worst tick latency in seconds."""
-        return max(self.latencies_s, default=0.0)
-
-    def as_dict(self) -> dict[str, float | int]:
-        """JSON-serialisable summary, handy for benchmarks and logs."""
-        return {
-            "ticks": self.ticks,
-            "overruns": self.overruns,
-            "deadline_misses": self.deadline_misses,
-            "elapsed_s": self.elapsed_s,
-            "mean_hz": self.mean_hz,
-            "mean_period_s": self.mean_period_s,
-            "errors": self.errors,
-            "consecutive_errors_max": self.consecutive_errors_max,
-            "mean_latency_s": self.mean_latency_s,
-            "p95_latency_s": self.p95_latency_s,
-            "max_latency_s": self.max_latency_s,
-        }
 
 
 class SOArm:
@@ -277,10 +157,7 @@ class SOArm:
         self._connected = False
         self._state: ArmState | None = None
         self._failures = 0
-        self._health: dict[str, tuple[float, ...] | tuple[int, ...]] = {}
-        self._health_t = -math.inf
-        self._health_index = 0
-        self._health_flags: dict[int, set[str]] = {}
+        self._health = HealthCache(self._model.motor_ids, clock)
         self._speed_scale = 1.0
         self._last_hz = DEFAULT_LOOP_HZ
         self._gripper: Gripper | None = None
@@ -483,8 +360,7 @@ class SOArm:
         try:
             values = self._bus.sync_read(self._model.motor_ids, register, retries=retries)
         except CommunicationError as exc:
-            if exc.motor_id is not None and exc.flags:
-                self._health_flags.setdefault(exc.motor_id, set()).update(exc.flags)
+            self._health.latch(exc)
             self._failures += 1
             if self._failures >= self._limits.max_consecutive_failures:
                 self._emergency_stop()
@@ -495,32 +371,6 @@ class SOArm:
             raise
         self._failures = 0
         return values
-
-    def _read_health_register(self, register: str, retries: int | None = None) -> None:
-        values = self._read(register, retries)
-        ids = self._model.motor_ids
-        if register == "present_voltage":
-            self._health["voltage_v"] = tuple(values[mid] * VOLTAGE_LSB_V for mid in ids)
-        elif register == "present_temperature":
-            self._health["temperature_c"] = tuple(values[mid] for mid in ids)
-        elif register == "present_speed":
-            self._health["speed_raw"] = tuple(values[mid] for mid in ids)
-        else:
-            self._health["current"] = tuple(values[mid] for mid in ids)
-
-    def _refresh_health(self, retries: int | None = None) -> None:
-        for register in _HEALTH_REGISTERS:
-            self._read_health_register(register, retries)
-        self._health_index = 0
-        self._health_t = self._clock()
-
-    def _refresh_health_incrementally(self, retries: int | None = None) -> None:
-        """Refresh one health register; the cache counts as fresh after four ticks."""
-        register = _HEALTH_REGISTERS[self._health_index % len(_HEALTH_REGISTERS)]
-        self._read_health_register(register, retries)
-        self._health_index += 1
-        if self._health_index % len(_HEALTH_REGISTERS) == 0:
-            self._health_t = self._clock()
 
     def read_once(
         self,
@@ -555,21 +405,18 @@ class SOArm:
         positions = self._read("present_position", retries)
         now = self._clock()
         if health is True:
-            self._refresh_health(retries)
+            self._health.refresh_all(self._read, retries)
             now = self._clock()
-        elif health is None and now - self._health_t >= (
+        elif health is None and now - self._health.refreshed_at >= (
             self._health_period_s if health_period_s is None else health_period_s
         ):
-            self._refresh_health_incrementally(retries)
+            self._health.refresh_incremental(self._read, retries)
             now = self._clock()
-        health_age = (
-            max(0.0, now - self._health_t) if math.isfinite(self._health_t) else float("inf")
-        )
-
-        speed = self._health.get("speed_raw", tuple(0 for _ in ids))
-        current = self._health.get("current", tuple(0 for _ in ids))
-        temperature = self._health.get("temperature_c", tuple(0.0 for _ in ids))
-        voltage = self._health.get("voltage_v", tuple(0.0 for _ in ids))
+        health_age = self._health.age(now)
+        speed = self._health.speed_raw
+        current = self._health.current
+        temperature = self._health.temperature_c
+        voltage = self._health.voltage_v
         state = ArmState(
             q_deg=tuple(
                 calibration.for_joint(joint).raw_to_deg(positions[mid])
@@ -777,29 +624,13 @@ class SOArm:
         Returns:
             Mapping ``joint -> MotorHealth`` in the model's joint order.
         """
-        self._refresh_health(retries)
-        ids = self._model.motor_ids
-        voltage = cast("tuple[float, ...]", self._health.get("voltage_v", ()))
-        temperature = cast("tuple[int, ...]", self._health.get("temperature_c", ()))
-        current = cast("tuple[int, ...]", self._health.get("current", ()))
-        health: dict[str, MotorHealth] = {}
-        for index, (joint, mid) in enumerate(zip(self._model.joints, ids, strict=True)):
-            flags = set(self._health_flags.get(mid, set()))
-            volts = voltage[index] if index < len(voltage) else 0.0
-            temp = temperature[index] if index < len(temperature) else 0
-            if volts and volts < self._limits.voltage_min_v:
-                flags.add("voltage")
-            if temp >= self._limits.temp_warn_c:
-                flags.add("overheat")
-            health[joint] = MotorHealth(
-                joint=joint,
-                motor_id=mid,
-                voltage_v=volts,
-                temperature_c=temp,
-                current_raw=current[index] if index < len(current) else 0,
-                flags=frozenset(flags),
-            )
-        return health
+        self._health.refresh_all(self._read, retries)
+        return build_health(
+            self._model,
+            self._health,
+            temp_warn_c=self._limits.temp_warn_c,
+            voltage_min_v=self._limits.voltage_min_v,
+        )
 
     def set_speed_scale(self, scale: float) -> float:
         """Scale every per-tick step limit, for the first cautious run on hardware.
@@ -827,11 +658,7 @@ class SOArm:
         Returns:
             Mapping ``register -> value`` for :data:`MOTOR_CONFIG_REGISTERS`.
         """
-        mid = self._model.id_of(joint)
-        ids = self._model.motor_ids
-        return {
-            register: self._bus.sync_read(ids, register)[mid] for register in MOTOR_CONFIG_REGISTERS
-        }
+        return read_motor_config(self._bus, self._model, joint)
 
     def set_motor_config(self, joint: str, **values: int) -> dict[str, int]:
         """Write tuning registers of one joint.
@@ -848,15 +675,7 @@ class SOArm:
         """
         if self._role == "leader":
             raise ConfigurationError("leader arms are read-only; motor config is unchanged")
-        unknown = sorted(set(values) - set(MOTOR_CONFIG_REGISTERS))
-        if unknown:
-            raise ConfigurationError(
-                f"Unknown motor config register(s) {unknown}; known: {list(MOTOR_CONFIG_REGISTERS)}"
-            )
-        mid = self._model.id_of(joint)
-        for register, value in values.items():
-            self._bus.write(mid, register, int(value))
-        return {register: int(value) for register, value in values.items()}
+        return write_motor_config(self._bus, self._model, joint, values)
 
     def raw_position(self, joint: str) -> int:
         """Read the raw ``present_position`` of one joint (ticks)."""
@@ -1025,7 +844,7 @@ class SOArm:
         self._state = self.read_once(health=False)
         return self._state
 
-    def run_control_loop(  # noqa: PLR0912, PLR0915 - the validation is part of the contract
+    def run_control_loop(
         self,
         callback: Callable[[ArmState, float], Sequence[float] | None],
         *,
@@ -1041,7 +860,9 @@ class SOArm:
 
         Each tick: read a state, call ``callback(state, elapsed_s)``, write the returned goal
         (``None`` means "hold, send nothing"). Deadlines are absolute, so jitter does not
-        accumulate; overruns are counted instead of silently shortening the period.
+        accumulate; overruns are counted instead of silently shortening the period. The
+        timing and error policy live in :mod:`pysoarm.loop`; this method binds them to the
+        arm's reads, writes, clock and sleep.
 
         Args:
             callback: ``(state, elapsed_s) -> goal_deg | None``.
@@ -1069,71 +890,28 @@ class SOArm:
                 cached state.
             PysoarmError: The original error when ``on_error="abort"``.
         """
-        if hz <= 0:
-            raise ConfigurationError("hz must be positive")
-        if read_state_every is not None and read_state_every < 0:
-            raise ConfigurationError("read_state_every must be non-negative")
-        if on_error not in ("abort", "hold", "skip"):
-            raise ConfigurationError(
-                f"unknown on_error {on_error!r}; expected 'abort', 'hold' or 'skip'"
-            )
-        if max_consecutive_errors < 1:
-            raise ConfigurationError("max_consecutive_errors must be at least 1")
-        if not read_state_every and self._state is None:
-            raise ConfigurationError(
-                "read_state_every=0 needs a cached state; call read_once() first"
-            )
-        period = 1.0 / hz
+        validate_loop_options(
+            hz=hz,
+            read_state_every=read_state_every,
+            on_error=on_error,
+            max_consecutive_errors=max_consecutive_errors,
+            initial_state=self._state,
+        )
         self._last_hz = hz
-        t0 = self._clock()
-        ticks = 0
-        overruns = 0
-        errors = 0
-        consecutive = 0
-        consecutive_max = 0
-        latencies: list[float] = []
-        state = self._state
-        try:
-            while True:
-                elapsed = self._clock() - t0
-                if duration is not None and elapsed >= duration:
-                    break
-                try:
-                    if read_state_every and (ticks % read_state_every == 0 or state is None):
-                        state = self.read_once(
-                            health=None if health_period_s is not None else False,
-                            retries=retries,
-                            health_period_s=health_period_s,
-                        )
-                    assert state is not None  # guaranteed by the check above
-                    sampled_at = self._clock()  # state handed to the callback
-                    goal = callback(state, elapsed)
-                    if goal is not None:
-                        self.write_goal(goal, retries=retries)
-                        latencies.append(self._clock() - sampled_at)
-                    consecutive = 0
-                except Exception:
-                    errors += 1
-                    consecutive += 1
-                    consecutive_max = max(consecutive_max, consecutive)
-                    if on_error == "abort" or consecutive >= max_consecutive_errors:
-                        raise
-                    # "hold" leaves the servos holding their last goal; "skip" just discards
-                    # the tick. Neither writes a goal derived from a failed sample.
-                deadline = t0 + (ticks + 1) * period
-                slack = deadline - self._clock()
-                if slack > 0:
-                    self._sleep(slack)
-                else:
-                    overruns += 1
-                ticks += 1
-        except KeyboardInterrupt:
-            pass
-        return LoopStats(
-            ticks=ticks,
-            overruns=overruns,
-            elapsed_s=self._clock() - t0,
-            errors=errors,
-            consecutive_errors_max=consecutive_max,
-            latencies_s=tuple(latencies),
+        return run_loop(
+            callback=callback,
+            read_state=lambda: self.read_once(
+                health=None if health_period_s is not None else False,
+                retries=retries,
+                health_period_s=health_period_s,
+            ),
+            write_goal=lambda goal: self.write_goal(goal, retries=retries),
+            initial_state=self._state,
+            hz=hz,
+            duration=duration,
+            read_state_every=read_state_every,
+            on_error=on_error,
+            max_consecutive_errors=max_consecutive_errors,
+            clock=self._clock,
+            sleep=self._sleep,
         )

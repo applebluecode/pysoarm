@@ -49,3 +49,6 @@ datasets/
 *.mp4
 *.bag
 .calibration-local.json
+
+# --- Local working notes (not part of the package) ------------------------
+REFACTOR_PLAN.md
