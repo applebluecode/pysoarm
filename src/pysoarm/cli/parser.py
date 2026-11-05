@@ -123,6 +123,12 @@ def _add_doctor_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]
         "--backend", choices=BACKENDS, default="auto", help="transport for --stress"
     )
     doctor.add_argument(
+        "--role",
+        choices=("follower", "leader"),
+        default="follower",
+        help="arm role; sets the default supply-voltage threshold (default: follower)",
+    )
+    doctor.add_argument(
         "--stress",
         type=float,
         default=0.0,
@@ -132,9 +138,11 @@ def _add_doctor_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     doctor.add_argument(
         "--min-voltage",
         type=float,
-        default=5.0,
-        help="warn below this supply voltage (default: 5.0 V)",
+        default=None,
+        metavar="VOLTS",
+        help=("warn below this supply voltage (default: 10.0 V follower, 4.0 V leader)"),
     )
+    doctor.add_argument("--json", action="store_true", help="machine-readable output")
 
 
 def build_parser() -> argparse.ArgumentParser:

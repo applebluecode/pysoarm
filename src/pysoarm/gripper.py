@@ -7,12 +7,19 @@ calibrated travel and the existing :meth:`~pysoarm.arm.SOArm.write_goal` path::
     arm.gripper.close()          # 0 % of the calibrated travel
     arm.gripper.move(40)         # 40 % open
     arm.gripper.open()           # 100 % open
+    arm.gripper.close(wait=True) # block until the jaws reach the end stop
     arm.gripper.homing()         # record the current closed position as the zero end
 
 ``percent == 0`` always means "closed end of the calibrated range" (``range_min``) and
 ``100`` the "open end" (``range_max``), independent of the sign introduced by ``drive_mode``.
 Gripping force is limited by the servo's ``protection_current`` / ``overload_torque``
 registers (written at connect time); there is no closed-loop force control.
+
+Without ``wait=True`` a call is **non-blocking**: it writes the target once and returns. With
+the default safety limits there is no software step cap, so the servo heads straight for the
+target; if you configure ``max_speed_deg_s``/``max_step_deg``, the goal is clipped to one step
+and you should call it in a loop or pass ``wait=True``. ``wait=True`` runs a timed trajectory
+(default 0.5 s), which is the smooth option regardless of limits.
 """
 
 from __future__ import annotations
@@ -21,6 +28,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from pysoarm.calibration import Calibration, JointCalibration
+from pysoarm.constants import DEFAULT_LOOP_HZ
 from pysoarm.exceptions import CalibrationError, ConfigurationError
 from pysoarm.state import ArmState
 
@@ -31,6 +39,8 @@ __all__ = ["Gripper"]
 
 #: Opening percentages are clamped to this inclusive range.
 PERCENT_MAX = 100.0
+#: Default duration of a blocking ``wait=True`` gripper move, in seconds.
+DEFAULT_GRIPPER_MOVE_S = 0.5
 
 
 class Gripper:
@@ -108,29 +118,76 @@ class Gripper:
         return tuple(goal)
 
     # -- motion ------------------------------------------------------------ #
-    def move(self, percent: float) -> tuple[float, ...]:
+    def move(
+        self,
+        percent: float,
+        *,
+        wait: bool = False,
+        duration: float = DEFAULT_GRIPPER_MOVE_S,
+        hz: float = DEFAULT_LOOP_HZ,
+    ) -> tuple[float, ...]:
         """Move to an opening percentage.
 
         Args:
             percent: ``0`` (closed) to ``100`` (open).
+            wait: When ``False`` (default) write the target once and return. With the default
+                unlimited limits the servo goes straight there; with a configured step/speed
+                limit the goal is clipped to one step and may not arrive in one call. When
+                ``True``, run a blocking timed trajectory until the target is reached.
+            duration: Duration of the blocking move in seconds (only with ``wait=True``).
+            hz: Loop rate of the blocking move (only with ``wait=True``).
 
         Returns:
-            The goal actually written (after the safety guards).
+            The goal actually written (after the safety guards). With ``wait=True`` it is the
+            final goal, re-clamped from the settled state.
 
         Raises:
-            ConfigurationError: On a read-only arm or an out-of-range percentage.
+            ConfigurationError: On a read-only arm, an out-of-range percentage, or a
+                non-positive ``duration``/``hz``.
         """
         if self._arm.is_read_only:
             raise ConfigurationError("leader arms are read-only; the gripper is not moved")
-        return self._arm.write_goal(self._goal(percent))
+        goal = self._goal(percent)
+        if not wait:
+            return self._arm.write_goal(goal)
+        if duration <= 0:
+            raise ConfigurationError("duration must be positive")
+        if hz <= 0:
+            raise ConfigurationError("hz must be positive")
+        self._arm.move_to(goal, duration=duration, hz=hz)
+        return self._arm.write_goal(goal)
 
-    def open(self) -> tuple[float, ...]:
-        """Drive the gripper to the open end of its travel."""
-        return self.move(100.0)
+    def open(
+        self,
+        *,
+        wait: bool = False,
+        duration: float = DEFAULT_GRIPPER_MOVE_S,
+        hz: float = DEFAULT_LOOP_HZ,
+    ) -> tuple[float, ...]:
+        """Drive the gripper to the open end of its travel.
 
-    def close(self) -> tuple[float, ...]:
-        """Drive the gripper to the closed end of its travel."""
-        return self.move(0.0)
+        Args:
+            wait: Block until the end stop is reached (see :meth:`move`).
+            duration: Duration of the blocking move in seconds.
+            hz: Loop rate of the blocking move.
+        """
+        return self.move(100.0, wait=wait, duration=duration, hz=hz)
+
+    def close(
+        self,
+        *,
+        wait: bool = False,
+        duration: float = DEFAULT_GRIPPER_MOVE_S,
+        hz: float = DEFAULT_LOOP_HZ,
+    ) -> tuple[float, ...]:
+        """Drive the gripper to the closed end of its travel.
+
+        Args:
+            wait: Block until the end stop is reached (see :meth:`move`).
+            duration: Duration of the blocking move in seconds.
+            hz: Loop rate of the blocking move.
+        """
+        return self.move(0.0, wait=wait, duration=duration, hz=hz)
 
     def hold(self) -> ArmState:
         """Command every joint, including the gripper, to its measured position."""

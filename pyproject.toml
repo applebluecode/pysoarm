@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pysoarm"
-version = "0.1.1"
+version = "0.1.2"
 description = "Lean, hardware-level Python API for SO-100/SO-101 robot arms (Feetech STS3215 serial bus)."
 readme = "README.md"
 requires-python = ">=3.10"

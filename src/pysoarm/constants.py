@@ -16,6 +16,10 @@ DEFAULT_BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT_S = 0.05
 #: Extra attempts after the first one for a failed read/write.
 DEFAULT_RETRIES = 2
+#: Extra whole-``connect()`` attempts after a transient failure.
+DEFAULT_CONNECT_RETRIES = 2
+#: Wait between whole-``connect()`` attempts, in seconds.
+DEFAULT_CONNECT_BACKOFF_S = 0.25
 #: Bus-wide id used by the SYNC WRITE instruction.
 BROADCAST_ID = 0xFE
 
@@ -60,3 +64,22 @@ DEFAULT_LOOP_HZ = 200.0
 #: Health registers (temperature/voltage/current) are refreshed at this interval instead of
 #: every tick, so the hot path stays at one sync read per step.
 DEFAULT_HEALTH_PERIOD_S = 0.5
+#: Recommended joint-speed ceiling for teleoperation, opt-in. Enforced as
+#: ``DEFAULT_MAX_SPEED_DEG_S / hz`` per tick, so a 50 Hz loop and a 200 Hz loop move at the
+#: same physical speed. The default :class:`~pysoarm.safety.SafetyLimits` applies **no**
+#: software speed cap (matching LeRobot's ``max_relative_target=None``); this value sits above
+#: the STS3215's no-load speed (about 270 deg/s at 12 V), so it bounds jump commands without
+#: slowing normal leader-follower following. Pass ``SafetyLimits(max_speed_deg_s=720)`` to use
+#: it; see ``docs/hardware.md`` for the measured numbers.
+DEFAULT_MAX_SPEED_DEG_S = 720.0
+#: Commands smaller than this are treated as inside the servo deadband and not sent. ``0``
+#: keeps the exact historical behaviour (every guard-passing goal is written).
+DEFAULT_MIN_STEP_DEG = 0.0
+
+# --------------------------------------------------------------------------- #
+# Supply-voltage thresholds
+# --------------------------------------------------------------------------- #
+#: A 12 V follower bus must stay above this; below it goals are refused.
+VOLTAGE_MIN_FOLLOWER_V = 10.0
+#: A 5 V leader bus is healthy at 4.7-4.9 V; the follower threshold would misreport it.
+VOLTAGE_MIN_LEADER_V = 4.0

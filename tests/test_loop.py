@@ -312,6 +312,51 @@ def test_validation_rejects_bad_options() -> None:
         )
 
 
+def test_errors_are_attributed_to_read_callback_and_write() -> None:
+    def bad_read() -> ArmState:
+        raise RuntimeError("read")
+
+    def bad_callback(_state: ArmState, _elapsed: float) -> Sequence[float] | None:
+        raise RuntimeError("callback")
+
+    def bad_write(_goal: Sequence[float]) -> Sequence[float]:
+        raise RuntimeError("write")
+
+    def run(**overrides: object) -> LoopStats:
+        clock = FakeClock()
+        options: dict[str, object] = {
+            "callback": no_goal,
+            "read_state": state,
+            "write_goal": bad_write,
+            "initial_state": state(),
+            "hz": 1000.0,
+            "duration": 0.005,
+            "read_state_every": 1,
+            "on_error": "hold",
+            "max_consecutive_errors": 100,
+            "clock": clock,
+            "sleep": clock.sleep,
+        }
+        options.update(overrides)
+        return run_loop(**options)  # type: ignore[arg-type]
+
+    read_stats = run(read_state=bad_read)
+    assert read_stats.read_errors == read_stats.ticks
+    assert read_stats.callback_errors == read_stats.write_errors == 0
+
+    callback_stats = run(callback=bad_callback)
+    assert callback_stats.callback_errors == callback_stats.ticks
+    assert callback_stats.read_errors == callback_stats.write_errors == 0
+
+    write_stats = run(callback=lambda s, t: s.q_deg)
+    assert write_stats.write_errors == write_stats.ticks
+    assert write_stats.read_errors == write_stats.callback_errors == 0
+    assert write_stats.errors == (
+        write_stats.read_errors + write_stats.callback_errors + write_stats.write_errors
+    )
+    assert {"read_errors", "callback_errors", "write_errors"} <= set(write_stats.as_dict())
+
+
 def test_loop_stats_are_bounded() -> None:
     empty = LoopStats(ticks=0, overruns=0, elapsed_s=0.0)
     assert empty.mean_period_s == 0.0

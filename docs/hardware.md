@@ -62,9 +62,48 @@ response  FF FF  ID  LEN  ERROR  [DATA...]    CHECKSUM
 | `Min/Max_Position_Limit` | 9 / 11 | 2 | unsigned |
 | `P/I/D_Coefficient` | 21 / 23 / 22 | 1 | unsigned |
 | `Acceleration` / `Maximum_Acceleration` | 41 / 85 | 1 | unsigned |
+| `Goal_Speed` | 46 | 2 | sign-magnitude (15); `0` = unlimited |
 | `Return_Delay_Time` | 7 | 1 | unsigned |
 | `Phase` | 18 | 1 | unsigned (bit 4 must be clear) |
 | `Max_Torque_Limit` / `Protection_Current` / `Overload_Torque` | 16 / 28 / 36 | 2/2/1 | gripper caps |
+
+## Precision, deadband and drift
+
+The STS3215 is a 12-bit single-turn servo with an internal position PID, so the software sees
+three limits that are easy to mistake for bugs:
+
+| Quantity | Value on the reference arm | Consequence |
+|---|---|---|
+| Encoder resolution | `360 / 4095 = 0.0879°` per tick | sub-degree goals are quantised |
+| Positioning deadband | residual **0.22–0.84°** after a 5°/tick convergence | do not chase sub-degree errors |
+| Minimum useful step | about **1°** | tolerances should be ≥ 1° |
+| Servo following lag | 3–4.6° at ±15°/0.5 Hz | use `set_motor_config()` (P gain, acceleration) if it matters |
+
+A very small `max_step_deg` (e.g. `0.5`) is counter-productive: each step lands inside the
+deadband and the joint moves only ~0.18° in 0.3 s. By default pysoarm applies **no software
+speed/step cap** (matching LeRobot's `max_relative_target=None`), so the servo's own
+~270°/s no-load ceiling governs normal following. If you want an explicit safety ceiling,
+use `SafetyLimits(max_speed_deg_s=720)` (above the hardware ceiling, so it only clips jump
+commands) or a smaller value to deliberately slow the arm; `SafetyLimits.min_step_deg` can
+suppress commands below a chosen deadband.
+
+A **leader is limp by design**, so it drifts under gravity between sessions (observed:
+`wrist_roll` moving from −104° to −87°) and the follower faithfully follows. Hold or re-zero
+the leader when absolute repeatability matters; this is not a calibration bug.
+
+## Supply voltage
+
+Follower and leader rails are different and the default threshold follows the role:
+
+| Role | Typical bus voltage | `SafetyLimits.voltage_min_v` default |
+|---|---|---|
+| follower | 11.8–12.1 V | `10.0 V` |
+| leader | 4.7–4.9 V (5 V rail) | `4.0 V` |
+
+`SOArm(role="leader")` (with `limits=None`) and `pysoarm doctor --role leader` use the leader
+threshold, so a healthy 4.8 V leader is no longer reported as undervoltage. At 4.7 V the
+servos can still drop the occasional reply; the bus retry and `connect()` backoff exist for
+that case, not to mask a weak supply.
 
 ## Known traps
 

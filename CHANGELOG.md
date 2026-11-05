@@ -9,6 +9,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [0.1.2] - 2026-11-05
+
+Follow-up to the 0.1.1 hardware re-test (`PYSOARM_IMPROVEMENTS.md` §11, items L1–L9):
+rate-independent speed limits, role-aware voltage defaults, gripper arrival semantics,
+resilient connect, per-source loop errors and machine-readable diagnostics.
+
+### Changed (behaviour defaults)
+
+- **No software speed/step cap by default** (L1, LeRobot parity). `SafetyLimits()` now defaults
+  to `max_speed_deg_s=None` and `max_step_deg=None`, so `write_goal()` sends the requested goal
+  (soft-limit clamped) instead of clipping it to a per-tick step. This matches LeRobot's SO
+  follower (`max_relative_target=None`) and removes the artificial speed ceiling during
+  teleoperation. A rate-independent ceiling remains one keyword away:
+  `SafetyLimits(max_speed_deg_s=720)` (14.4°/tick at 50 Hz, 3.6°/tick at 200 Hz) or
+  `SafetyLimits(max_step_deg=5.0)` for a fixed cap; when both are set the stricter wins.
+  `set_speed_scale()` only affects a configured cap. `connect()` logs the effective settings at
+  INFO (including "no software speed/step cap").
+- **Voltage threshold follows the role** (L3). `SOArm(role="leader")` with the default
+  limits uses `SafetyLimits.for_role("leader")` (4.0 V) instead of the follower's 10.0 V, so
+  a healthy 4.7–4.9 V leader is no longer flagged `voltage` by `health()` or `doctor`.
+  Callers that constructed `SafetyLimits()` explicitly keep 10.0 V.
+
+### Added
+
+- **`doctor --json` and role-aware stress probe** (L2, L9). `_stress()` now reports
+  `timeouts` (no reply) and `status_alarms` (a reply carrying an `ERROR` bit) as separate
+  counters with an `alarm_counts` histogram and failed-read latency; `doctor --json` emits
+  `port`, `role`, `min_voltage_v`, `backend`, `checks`, `warnings`, `timeouts`,
+  `status_alarms`, `alarm_counts`, `latency` and `failed_latency`. `doctor --role leader`
+  defaults `--min-voltage` to 4.0 V.
+- **Blocking gripper moves** (L4). `gripper.move(percent, wait=True, duration=0.5, hz=200)`
+  (also `open`/`close`) runs a trajectory until the jaws arrive; without `wait` the call
+  keeps the historical one-step, non-blocking behaviour. `homing()` is documented as
+  changing the closed end only.
+- **`goal_speed` in the tuning surface** (L5). It is now part of `MOTOR_CONFIG_REGISTERS`,
+  so `motor_config()` reads it and `set_motor_config(joint, goal_speed=...)` writes it.
+  Default remains `0` (servo-unlimited), so the LeRobot-compatible configuration is unchanged.
+- **`connect()` retries with a backoff** (L6). `connect(retries=2, backoff_s=0.25)` retries
+  the whole connect sequence after a transient bus failure (closing/reopening the port and
+  clearing per-attempt health state). The final error includes the attempt count, a hint to
+  check supply/wiring/port ownership and the matching `pysoarm doctor` command.
+- **Per-source loop errors** (L7). `LoopStats` gains `read_errors`, `callback_errors` and
+  `write_errors` (summing to `errors`, included in `as_dict()`), so a failed leader read inside
+  a teleoperation callback is distinguishable from a follower read failure. The docs now spell
+  out the precedence: arm watchdog (3) before the loop cutoff (10).
+- **`SafetyLimits.min_step_deg`** (L8). Commands below the configured deadband are not sent;
+  the measured position is kept and the skip is reported in `SafetyReport.reasons`. Default
+  `0.0` keeps the exact previous `write_goal` output.
+- **`SafetyLimits.for_role(role, **overrides)`** for role-appropriate defaults.
+- **Docs**: precision/deadband/drift tables (`docs/hardware.md`), speed and failure-precedence
+  tables (`docs/reference/api.md`), role-aware supply voltages, and the 0.1.2 version stamp.
+- **Tests**: 21 new cases for L1–L9 (default no-limit parity + opt-in speed preset, stress
+  classification, leader voltage, gripper arrival, `goal_speed`, connect retry, error
+  attribution, deadband skip and `doctor --json`), bringing the offline suite to 305.
+
 ## [0.1.1] - 2026-11-05
 
 Reliability, calibration and diagnostics: the follow-up to the first hardware report.

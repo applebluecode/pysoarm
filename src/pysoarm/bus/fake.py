@@ -101,6 +101,7 @@ class FakeBus:
             "overload_torque": 50,
             "torque_enable": 1 if torque_enabled else 0,
             "acceleration": 254,
+            "goal_speed": 0,
             "goal_position": position,
             "maximum_acceleration": 254,
             "present_position": position,

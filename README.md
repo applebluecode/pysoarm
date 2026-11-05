@@ -14,7 +14,7 @@ no training stack. It targets the ergonomics of `pylibfranka` / `pyAgxArm`
 (`connect()` → `read_once()` → `write_goal()` / control loop) within what position-servo
 hardware can actually do.
 
-> **Status: 0.1.1.** Bus transport (SCS over `pyserial` and the optional `rustypot` backend),
+> **Status: 0.1.2.** Bus transport (SCS over `pyserial` and the optional `rustypot` backend),
 > calibration (including the motor-side flow and `pysoarm calibrate`), safety guards,
 > trajectories, Cartesian kinematics, the `SOArm` device object with follower/leader roles,
 > structured diagnostics, the `ArmBridge`/ROS 2 adapter and the CLI are implemented and
@@ -33,8 +33,13 @@ hardware can actually do.
   guards, communication watchdog — the parts that usually get skipped in quick scripts.
 * **Reuses your existing calibration** (LeRobot-compatible JSON) instead of forcing
   a re-calibration, and can run the Feetech calibration flow itself (`pysoarm calibrate`).
-* **Field diagnostics**: structured status bits, `arm.health()`, `pysoarm doctor --stress`,
-  per-tick latency/p95 and an error policy that survives a lost frame.
+* **Field diagnostics**: structured status bits, `arm.health()`, `pysoarm doctor --stress`
+  (with `--json` and role-aware voltage thresholds), per-tick latency/p95 and an error policy
+  that survives a lost frame, with failures attributed to the read, callback or write.
+* **No software speed cap by default** (LeRobot parity): goals are sent as requested, bounded
+  by the soft limits, thermal/voltage guards and the servo itself. Opt in to a rate-independent
+  ceiling with `SafetyLimits(max_speed_deg_s=720)`; `gripper.close(wait=True)` runs a timed
+  trajectory, and `connect()` retries transient serial failures with a backoff.
 
 ## What it is not
 
@@ -199,7 +204,7 @@ PYSOARM_HARDWARE_PORT=/dev/ttyACM0 pytest -m hardware
 ## Publishing
 
 1. bump `version` in `pyproject.toml` and `CHANGELOG.md`;
-2. `git tag v0.1.1 && git push --tags`;
+2. `git tag v0.1.2 && git push --tags`;
 3. the `release.yml` workflow builds, runs `twine check`, and publishes to PyPI via
    **trusted publishing** (OIDC, no API token stored).
 

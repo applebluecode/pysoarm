@@ -1,6 +1,6 @@
 # Quickstart
 
-!!! note "Version 0.1.1"
+!!! note "Version 0.1.2"
     The snippets below describe the current API and are kept in sync with `arm.py`.
 
 ## Calibrate a fresh arm

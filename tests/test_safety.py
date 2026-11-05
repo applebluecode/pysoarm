@@ -57,7 +57,8 @@ def test_goal_inside_limits_passes_through(
 def test_soft_limit_clamps_with_margin(
     calibration: Calibration, calibration_dict: dict[str, dict[str, int]]
 ) -> None:
-    limits = SafetyLimits(max_step_deg=1000.0, limit_margin_deg=2.0)
+    # isolate the soft limit: no speed ceiling and a step cap that cannot bind
+    limits = SafetyLimits(max_step_deg=1000.0, max_speed_deg_s=None, limit_margin_deg=2.0)
     report = apply_guards(
         (500.0,) * SO101.joint_count,
         state=make_state(),
@@ -81,6 +82,7 @@ def test_per_step_clipping_protects_the_first_goal(calibration: Calibration) -> 
         calibration=calibration,
         model=SO101,
         limits=limits,
+        step_deg=5.0,
     )
     assert report.goal_deg[0] == pytest.approx(5.0)
     assert report.clipped
@@ -96,6 +98,7 @@ def test_temperature_derates_the_step(calibration: Calibration) -> None:
         calibration=calibration,
         model=SO101,
         limits=limits,
+        step_deg=5.0,
     )
     # 60 C is halfway between warn (55) and max (65) -> derate 1 - 0.75/2 = 0.625
     assert report.derate == pytest.approx(0.625)
@@ -190,7 +193,10 @@ def test_step_for_converts_speed_to_a_per_tick_limit() -> None:
 def test_step_for_keeps_the_stricter_of_both_limits() -> None:
     limits = SafetyLimits(max_step_deg=5.0, max_speed_deg_s=400.0)
     assert limits.step_for(50.0) == pytest.approx(5.0)  # speed would allow 8
-    assert SafetyLimits().step_for(200.0) == pytest.approx(5.0)
+    # the default has no software limit, matching LeRobot's max_relative_target=None
+    assert math.isinf(SafetyLimits().step_for(200.0))
+    # a fixed cap is independent of the loop rate
+    assert SafetyLimits(max_step_deg=5.0).step_for(200.0) == pytest.approx(5.0)
 
 
 def test_step_override_tightens_the_guard(calibration: Calibration) -> None:

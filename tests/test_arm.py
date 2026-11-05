@@ -69,11 +69,9 @@ def test_connect_rejects_uncalibrated_motors() -> None:
 
 def test_write_goal_returns_what_it_actually_sent(arm: SOArm) -> None:
     arm.connect()
-    state = arm.state
-    assert state is not None
-    sent = arm.write_goal((170.0,) * SO101.joint_count)
-    for wanted, actual in zip(state.q_deg, sent, strict=True):
-        assert abs(wanted - actual) <= arm.limits.max_step_deg + 1e-6
+    # the default has no software step cap, so a goal inside the travel is sent verbatim
+    requested = (10.0, -10.0, 20.0, 0.0, 90.0, 40.0)
+    assert arm.write_goal(requested) == pytest.approx(requested)
 
 
 def test_write_goal_rejects_wrong_joint_count(arm: SOArm) -> None:
@@ -290,7 +288,12 @@ def test_health_reports_structured_flags(arm: SOArm, bus: FakeBus) -> None:
     assert "flags" in health["gripper"].as_dict()
 
 
-def test_speed_scale_shrinks_every_step(arm: SOArm) -> None:
+def test_speed_scale_shrinks_every_step(bus: FakeBus, calibration_path: Path) -> None:
+    arm = SOArm(
+        bus=bus,
+        calibration=calibration_path,
+        limits=SafetyLimits(max_step_deg=5.0, max_speed_deg_s=None),
+    )
     arm.connect()
     assert arm.set_speed_scale(0.1) == pytest.approx(0.1)
     state = arm.state
@@ -377,18 +380,16 @@ def test_gripper_facade_moves_and_homes(arm: SOArm, bus: FakeBus) -> None:
     gripper = arm.gripper
     assert gripper.joint == "gripper"
 
-    for _ in range(30):
-        gripper.close()
+    # the default has no software step cap, so one command reaches the end stop
+    gripper.close()
     state = arm.read_once(health=False)
     assert gripper.percent(state) == pytest.approx(0.0, abs=1.0)
 
-    for _ in range(30):
-        gripper.open()
+    gripper.open(wait=True)
     state = arm.read_once(health=False)
     assert gripper.percent(state) == pytest.approx(100.0, abs=1.0)
 
-    for _ in range(30):
-        gripper.move(40)
+    gripper.move(40, wait=True)
     state = arm.read_once(health=False)
     assert gripper.percent(state) == pytest.approx(40.0, abs=2.0)
 

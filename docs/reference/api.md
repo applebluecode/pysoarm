@@ -1,6 +1,6 @@
 # API reference
 
-Complete reference for the public API of `pysoarm` **0.1.1**. Every symbol documented here is
+Complete reference for the public API of `pysoarm` **0.1.2**. Every symbol documented here is
 importable from the top-level package:
 
 ```python
@@ -135,8 +135,11 @@ construct ──► connect() ──► read_once()/write_goal()/move_to() ─�
 
 `connect()` is deliberately conservative: torque stays off while the motors are configured,
 the measured pose is written back as the first goal, and only then is torque enabled — the arm
-cannot jump on connect. The steps are idempotent where possible; calling `connect()` twice is
-harmless, and `stop()` may be called at any time in any state.
+cannot jump on connect. A transient bus failure (no reply, checksum, alarm bit) is retried as
+a whole sequence with a short backoff (`connect(retries=2, backoff_s=0.25)`), which covers the
+serial-reopen race seen in containers; the final error names the attempt count and the
+`pysoarm doctor` command. Non-transient errors (wrong model, missing calibration) are never
+retried.
 
 ### Typical calls
 
@@ -170,6 +173,37 @@ arm.stop()
 
 That amortisation is what keeps a 200 Hz loop inside its 5 ms budget while temperature and
 voltage stay fresh enough for the guards.
+
+### Gripper, roles and tuning
+
+`arm.gripper` is a percent-of-travel facade over the sixth joint (`0` = closed end of the
+calibrated range, `100` = open end):
+
+```python
+arm.gripper.close(wait=True)     # timed trajectory (default duration 0.5 s)
+arm.gripper.open(wait=True)
+arm.gripper.move(40, wait=True)  # 40 % open
+arm.gripper.close()              # one command; immediate with the default limits
+arm.gripper.percent()            # current opening, 0..100
+```
+
+Without `wait=True` the target is written once. With the default limits there is no step cap,
+so the servo heads straight there; if you configure `max_speed_deg_s`/`max_step_deg`, the goal
+is clipped to one step and the jaws may need several calls to arrive. `wait=True` runs a timed
+trajectory, which is the smooth option regardless of limits. `homing()` redefines the closed end at the current position; it
+does **not** move the jaws.
+
+`role="leader"` makes the whole object read-only (no goal writes, torque stays off). Tuning
+registers are exposed per joint, including the servo's own velocity ceiling:
+
+```python
+arm.motor_config("gripper")                              # dict of registers
+arm.set_motor_config("shoulder_pan", goal_speed=1000)    # 0 = servo-unlimited (default)
+```
+
+`goal_speed` (register 46) is the servo's internal limit and is independent of the software
+`step_for(hz)` guard and of the acceleration ramp; leaving it at `0` keeps the
+LeRobot-compatible configuration.
 
 ::: pysoarm.arm
     options:
@@ -217,24 +251,73 @@ Every goal passes the same guard chain in `write_goal()` — there is no bypass 
 | 3 | Temperature | `temp_max_c` | `SafetyViolation` |
 | 4 | Voltage | `voltage_min_v` | `SafetyViolation` |
 | 5 | Calibrated limits | `limit_margin_deg` | goal clamped inward, `clipped=True` |
-| 6 | Step size | `max_step_deg` (scaled by the derate factor) | goal clipped to `state.q_deg ± max_step` |
-| 7 | Derating | `temp_warn_c` | `SafetyLimits.derate()` returns a factor in `(0.25, 1.0]` from the hottest motor, which shrinks the allowed step |
+| 6 | Step size (**opt-in**) | `step_for(hz) = min(max_step_deg, max_speed_deg_s / hz)` (scaled by the derate factor) | goal clipped to `state.q_deg ± step`; no clipping when both limits are `None` |
+| 7 | Deadband | `min_step_deg` | command smaller than the deadband is not sent; measured position kept, reported in `reasons` |
+| 8 | Derating | `temp_warn_c` | `SafetyLimits.derate()` returns a factor in `(0.25, 1.0]` from the hottest motor, which shrinks a configured step limit |
 
-`SafetyLimits()` defaults are the reference values used on the reference arm:
+`SafetyLimits()` defaults put **no software cap on the per-tick step or joint speed**, matching
+LeRobot's SO follower (`max_relative_target=None`). Each guard-passing goal is sent as
+requested; the calibrated soft limits, thermal/voltage guards, watchdog and the servo itself
+still apply:
 
 | Field | Default | Meaning |
 |---|---|---|
-| `max_step_deg` | `5.0` | Largest change of a joint between two goals |
+| `max_step_deg` | `None` | No fixed per-tick cap. Set e.g. `5.0` for a fixed absolute limit |
+| `max_speed_deg_s` | `None` | No speed cap. Set `720.0` for the recommended teleoperation preset (14.4°/tick @ 50 Hz, 3.6° @ 200 Hz) |
+| `min_step_deg` | `0.0` | Commands below this are not sent (servo deadband); `0` keeps the historical behaviour |
 | `limit_margin_deg` | `1.0` | Margin kept inside the calibrated travel |
 | `temp_warn_c` | `55.0` | Above this, goals are derated |
 | `temp_max_c` | `70.0` | At this, goals are refused |
-| `voltage_min_v` | `10.0` | Below this, goals are refused |
+| `voltage_min_v` | `10.0` follower / `4.0` leader | Below this, goals are refused; `SOArm(limits=None)` picks it from `role` via `SafetyLimits.for_role()` |
 | `max_consecutive_failures` | `3` | Read failures before the watchdog trips |
+
+Choosing a software limit is opt-in:
+
+```python
+SafetyLimits()                       # no speed/step cap (LeRobot parity, default)
+SafetyLimits(max_speed_deg_s=720)    # 720 deg/s at any loop rate
+SafetyLimits(max_step_deg=5.0)       # fixed 5 deg/tick at any loop rate
+SafetyLimits(max_step_deg=5.0, max_speed_deg_s=720)  # the stricter one wins
+```
+
+When both are set, `step_for(hz)` returns the stricter value. `SOArm.set_speed_scale(s)` scales
+a configured limit; with the default unbounded limits there is nothing to scale, so configure
+`max_speed_deg_s`/`max_step_deg` first if you want to use it.
 
 The contract on tripping is part of the API: `WatchdogTimeout` leaves torque **off**, and
 `SafetyViolation`/`CalibrationError`/`NotReachableError` are raised **before** a goal is
 written, so the arm keeps its last safe target. Temperature is judged on the hottest motor
 (`ArmState.max_temperature_c`) and voltage on the lowest one (`ArmState.min_voltage_v`).
+
+### Failure thresholds and their precedence
+
+A teleoperation loop has two independent cutoffs. The **arm watchdog** sees bus failures and
+trips first; the **loop cutoff** is the second line of defence for errors the watchdog cannot
+see (a leader read inside the callback, a user-code bug):
+
+| Layer | Setting | Default | Effect when hit |
+|---|---|---|---|
+| Arm watchdog | `SafetyLimits.max_consecutive_failures` | `3` | `WatchdogTimeout`, torque disabled |
+| Loop cutoff | `run_control_loop(max_consecutive_errors=...)` | `10` | re-raises the original error |
+| Loop policy | `run_control_loop(on_error=...)` | `"abort"` | `"hold"`/`"skip"` count the tick and continue |
+
+`LoopStats` attributes every handled failure to its source: `read_errors`,
+`callback_errors` and `write_errors` (their sum is `errors`). In teleoperation a failed
+*leader* read inside the callback is a `callback_error`, not a follower `read_error`.
+
+### Precision and the smallest useful step
+
+One encoder tick is `360 / 4095 = 0.0879°`. The servo's positioning deadband is larger than
+that: on the reference arm, a stream of 5°/tick commands converged to a residual of
+**0.22–0.84°**, and `max_step_deg=0.5` moved only ~0.18° in 0.3 s because the tiny steps fell
+inside the deadband. Practical guidance:
+
+* treat **≥ 1°** as the repeatability floor for goals and tolerance checks;
+* do not try to close a sub-degree error with repeated `write_goal()` calls — it will not move;
+* if you must suppress deadband-sized commands, set `SafetyLimits.min_step_deg` (default `0`,
+  so behaviour is unchanged) and inspect `SafetyReport.reasons`;
+* a leader arm is limp by design, so its pose **drifts** between sessions (gravity); the
+  follower faithfully follows that drift. Re-zero or hold the leader when this matters.
 
 ::: pysoarm.safety
 
@@ -395,7 +478,13 @@ $ pysoarm calibration export --port /dev/ttyACM0 --output my_follower.json
 $ pysoarm bench   --port /dev/ttyACM0 --seconds 5
 $ pysoarm doctor  --port /dev/so101_follower
 $ pysoarm doctor  --port /dev/ttyACM0 --stress 3             # electrical + status self-check
+$ pysoarm doctor  --port /dev/ttyACM0 --role leader --json   # 5 V thresholds, machine readable
 ```
+
+The JSON report contains `port`, `role`, `min_voltage_v`, `backend`, `checks`,
+`warnings`, `timeouts`, `status_alarms`, `alarm_counts`, `latency` and `failed_latency`.
+Timeouts (no reply) and status alarms (a reply with an `ERROR` bit) are counted separately;
+`--min-voltage` defaults to 10.0 V for a follower and 4.0 V for a leader.
 
 Exit codes: `0` success, `1` runtime error (bus, communication, safety), `2` usage error.
 

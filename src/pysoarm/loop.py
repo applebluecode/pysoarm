@@ -42,10 +42,17 @@ class LoopStats:
             number of missed deadlines: the loop keeps absolute deadlines, so a missed tick
             is counted rather than hidden by shortening the next period.
         elapsed_s: Wall-clock duration of the loop.
-        errors: Ticks that raised and were handled by a non-``abort`` error policy.
+        errors: Ticks that raised and were handled by a non-``abort`` error policy. Always
+            the sum of :attr:`read_errors`, :attr:`callback_errors` and :attr:`write_errors`.
         consecutive_errors_max: Longest run of consecutive failed ticks.
         latencies_s: Per-tick command latency, measured from the callback's sampling instant
             to the completed goal write. Only ticks that wrote a goal are recorded.
+        read_errors: Failed ticks whose ``read_state()`` call raised. In teleoperation this
+            usually means the leader (the read in the callback) or the follower read failed,
+            while :attr:`callback_errors` is raised by user code (for example a second
+            leader read inside the callback).
+        callback_errors: Failed ticks whose callback raised.
+        write_errors: Failed ticks whose goal write raised.
 
     All derived values are computed on demand, so the object stays a cheap immutable record.
     """
@@ -56,6 +63,9 @@ class LoopStats:
     errors: int = 0
     consecutive_errors_max: int = 0
     latencies_s: tuple[float, ...] = ()
+    read_errors: int = 0
+    callback_errors: int = 0
+    write_errors: int = 0
 
     @property
     def mean_period_s(self) -> float:
@@ -122,6 +132,9 @@ class LoopStats:
             "mean_hz": self.mean_hz,
             "mean_period_s": self.mean_period_s,
             "errors": self.errors,
+            "read_errors": self.read_errors,
+            "callback_errors": self.callback_errors,
+            "write_errors": self.write_errors,
             "consecutive_errors_max": self.consecutive_errors_max,
             "mean_latency_s": self.mean_latency_s,
             "p95_latency_s": self.p95_latency_s,
@@ -213,6 +226,7 @@ def run_loop(
     ticks = 0
     overruns = 0
     errors = 0
+    phase_errors = {"read": 0, "callback": 0, "write": 0}
     consecutive = 0
     consecutive_max = 0
     latencies: list[float] = []
@@ -222,12 +236,15 @@ def run_loop(
             elapsed = clock() - t0
             if duration is not None and elapsed >= duration:
                 break
+            phase = "read"
             try:
                 if read_state_every and (ticks % read_state_every == 0 or state is None):
                     state = read_state()
                 assert state is not None  # guaranteed by the option validation
+                phase = "callback"
                 sampled_at = clock()  # the state handed to the callback
                 goal = callback(state, elapsed)
+                phase = "write"
                 if goal is not None:
                     write_goal(goal)
                     latencies.append(clock() - sampled_at)
@@ -236,6 +253,7 @@ def run_loop(
                 errors += 1
                 consecutive += 1
                 consecutive_max = max(consecutive_max, consecutive)
+                phase_errors[phase] += 1
                 if on_error == "abort" or consecutive >= max_consecutive_errors:
                     raise
                 # "hold" leaves the servos holding their last goal; "skip" just discards
@@ -256,4 +274,7 @@ def run_loop(
         errors=errors,
         consecutive_errors_max=consecutive_max,
         latencies_s=tuple(latencies),
+        read_errors=phase_errors["read"],
+        callback_errors=phase_errors["callback"],
+        write_errors=phase_errors["write"],
     )

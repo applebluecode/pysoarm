@@ -23,6 +23,7 @@ Design rules:
 from __future__ import annotations
 
 import contextlib
+import logging
 import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -33,6 +34,8 @@ from pysoarm.bus.base import Bus
 from pysoarm.calibration import Calibration, read_calibration, write_calibration
 from pysoarm.constants import (
     DEFAULT_ACCELERATION,
+    DEFAULT_CONNECT_BACKOFF_S,
+    DEFAULT_CONNECT_RETRIES,
     DEFAULT_D_COEFFICIENT,
     DEFAULT_HEALTH_PERIOD_S,
     DEFAULT_I_COEFFICIENT,
@@ -64,6 +67,8 @@ from pysoarm.tuning import read_motor_config, write_motor_config
 
 __all__ = ["ErrorPolicy", "LoopStats", "Role", "SOArm"]
 
+_LOGGER = logging.getLogger(__name__)
+
 #: How the arm is used: a ``follower`` accepts goals and torque; a ``leader`` is read-only.
 Role = Literal["follower", "leader"]
 
@@ -86,7 +91,10 @@ class SOArm:
         model: Model name (``"so101"``) or a :class:`~pysoarm.models.base.RobotModel`.
         calibration: :class:`~pysoarm.calibration.Calibration`, a LeRobot JSON path, or
             ``None`` to read the calibration stored in the motors.
-        limits: Safety thresholds.
+        limits: Safety thresholds. ``None`` (default) uses :meth:`SafetyLimits.for_role`, so a
+            ``leader`` gets the 5 V threshold (4.0 V) instead of the follower's 10.0 V. The
+            default applies **no software speed/step cap** (LeRobot parity); pass
+            ``SafetyLimits(max_speed_deg_s=720)`` for the recommended teleoperation ceiling.
         baudrate: Override the model's baudrate.
         timeout_s: Per-transaction timeout.
         retries: Extra attempts per transaction.
@@ -131,7 +139,7 @@ class SOArm:
         if role not in ("follower", "leader"):
             raise ConfigurationError(f"role must be 'follower' or 'leader', got {role!r}")
         self._model = get_model(model) if isinstance(model, str) else model
-        self._limits = limits if limits is not None else SafetyLimits()
+        self._limits = limits if limits is not None else SafetyLimits.for_role(role)
         self._role: Role = role
         if bus is not None:
             self._bus = bus
@@ -180,7 +188,11 @@ class SOArm:
 
     @property
     def speed_scale(self) -> float:
-        """Multiplier applied to every per-tick step limit (default ``1.0``)."""
+        """Multiplier applied to a configured per-tick step limit (default ``1.0``).
+
+        With the default limits there is no step limit to scale, so this stays ``1.0`` and has
+        no effect until ``max_speed_deg_s`` or ``max_step_deg`` is configured.
+        """
         return self._speed_scale
 
     @property
@@ -223,25 +235,128 @@ class SOArm:
         return Calibration.from_json(calibration)
 
     # -- lifecycle --------------------------------------------------------- #
-    def connect(self, *, allow_model_mismatch: bool = False) -> None:
+    def connect(
+        self,
+        *,
+        allow_model_mismatch: bool = False,
+        retries: int | None = None,
+        backoff_s: float = DEFAULT_CONNECT_BACKOFF_S,
+    ) -> None:
         """Open the bus, configure the motors, hold the current pose, enable torque.
 
         The sequence is deliberately conservative: torque is off while the motors are
         configured, the measured pose is written back as the first goal, and only then is
         torque enabled. A leader is never commanded and its torque is never enabled.
 
+        A transient bus failure (no reply, checksum, servo alarm) is retried as a **whole
+        connect sequence**, after closing and reopening the port and waiting ``backoff_s``.
+        That covers the container/serial-reopen race observed on real hardware; it never
+        retries a non-transient error (wrong model, missing calibration).
+
         Args:
             allow_model_mismatch: Accept servos whose ``model_number`` differs from the
                 model's expectation (useful for clones or a mixed bench).
+            retries: Extra whole-sequence attempts after a transient failure. ``None``
+                (default) uses :data:`~pysoarm.constants.DEFAULT_CONNECT_RETRIES` (2), for
+                three attempts in total.
+            backoff_s: Wait between attempts, in seconds.
 
         Raises:
             BusConnectionError: Port unavailable or a motor did not answer.
-            ConfigurationError: The servos report an unexpected model number.
+            ConfigurationError: The servos report an unexpected model number, or
+                ``retries``/``backoff_s`` is negative.
             CalibrationError: Calibration missing, incomplete or mismatched.
-            CommunicationError: A register transaction failed after retries.
+            CommunicationError: A register transaction failed after every attempt; the
+                message includes the attempt count and a recovery hint.
         """
         if self._connected:
             raise ConfigurationError("arm is already connected")
+        extra = DEFAULT_CONNECT_RETRIES if retries is None else retries
+        if extra < 0:
+            raise ConfigurationError("retries must be non-negative")
+        if backoff_s < 0:
+            raise ConfigurationError("backoff_s must be non-negative")
+        attempts = extra + 1
+        last: CommunicationError | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                self._connect_once(allow_model_mismatch)
+            except CommunicationError as exc:
+                last = exc
+                self._reset_after_failed_connect()
+                if attempt >= attempts or not exc.transient:
+                    break
+                _LOGGER.warning(
+                    "connect attempt %d/%d failed (%s); retrying in %.2f s",
+                    attempt,
+                    attempts,
+                    exc,
+                    backoff_s,
+                )
+                if backoff_s > 0:
+                    self._sleep(backoff_s)
+            else:
+                if self._limits.max_speed_deg_s is None and self._limits.max_step_deg is None:
+                    _LOGGER.info(
+                        "safety limits: no software speed/step cap (soft limits, "
+                        "thermal/voltage guards and watchdog active); voltage_min %.1f V "
+                        "(%s arm)",
+                        self._limits.voltage_min_v,
+                        self._role,
+                    )
+                elif self._limits.max_speed_deg_s is None:
+                    _LOGGER.info(
+                        "safety limits: absolute cap %.1f deg/tick; voltage_min %.1f V "
+                        "(%s arm)",
+                        self._limits.max_step_deg,
+                        self._limits.voltage_min_v,
+                        self._role,
+                    )
+                else:
+                    _LOGGER.info(
+                        "safety limits: %s deg/s%s; voltage_min %.1f V (%s arm)",
+                        self._limits.max_speed_deg_s,
+                        (
+                            ""
+                            if self._limits.max_step_deg is None
+                            else f", absolute cap {self._limits.max_step_deg:.1f} deg/tick"
+                        ),
+                        self._limits.voltage_min_v,
+                        self._role,
+                    )
+                return
+        assert last is not None  # only reached after a CommunicationError
+        raise CommunicationError(
+            f"{last} (gave up after {attempt} connect attempt(s)). Check the supply voltage, "
+            "the servo wiring and that no other process holds the port; run "
+            f"'pysoarm doctor --port {self._port_hint()}' for a full check.",
+            motor_id=last.motor_id,
+            register=last.register,
+            raw=last.raw,
+            status=last.status,
+            transient=last.transient,
+            attempts=attempt,
+        ) from last
+
+    def _port_hint(self) -> str:
+        """Best-effort port name for error messages (the bus may expose no path)."""
+        for attribute in ("port", "_port"):
+            value = getattr(self._bus, attribute, None)
+            if value:
+                return str(value)
+        return "<port>"
+
+    def _reset_after_failed_connect(self) -> None:
+        """Close the port and clear per-attempt state before another connect attempt."""
+        with contextlib.suppress(Exception):
+            self._bus.close()
+        self._connected = False
+        self._state = None
+        self._failures = 0
+        self._health = HealthCache(self._model.motor_ids, self._clock)
+
+    def _connect_once(self, allow_model_mismatch: bool) -> None:
+        """One complete connect sequence; closes the bus on any failure."""
         self._bus.open()
         try:
             found = self._bus.scan(self._model.motor_ids)
@@ -446,7 +561,8 @@ class SOArm:
         Args:
             q_deg: Requested goal in degrees, in the model's joint order.
             step_deg: Per-tick step limit override; defaults to
-                ``limits.step_for(last loop rate) * speed_scale``.
+                ``limits.step_for(last loop rate) * speed_scale`` (``inf`` when no limit is
+                configured, so the goal is only soft-limit clamped).
             retries: Per-call override of the bus retry count.
 
         Returns:
@@ -633,7 +749,11 @@ class SOArm:
         )
 
     def set_speed_scale(self, scale: float) -> float:
-        """Scale every per-tick step limit, for the first cautious run on hardware.
+        """Scale a configured per-tick step limit, for the first cautious run on hardware.
+
+        This multiplies ``SafetyLimits.step_for(hz)``. With the default limits (no speed or
+        step cap) there is nothing to scale and the value has no effect; configure
+        ``SafetyLimits(max_speed_deg_s=720)`` or ``max_step_deg`` first when using it.
 
         Args:
             scale: Multiplier in ``(0, 1]``.
@@ -876,9 +996,17 @@ class SOArm:
                 hot path. A float re-enables it through the arm's round-robin refresh.
             on_error: What to do when a read, callback or write raises:
                 ``"abort"`` (default) re-raises, ``"hold"`` leaves the last goal in place and
-                continues, ``"skip"`` discards the tick and continues.
+                continues, ``"skip"`` discards the tick and continues. The raised error is
+                attributed to its source in :attr:`LoopStats.read_errors`,
+                :attr:`LoopStats.callback_errors` and :attr:`LoopStats.write_errors`, which
+                matters in teleoperation (a leader read inside the callback is a *callback*
+                error, not a follower read error).
             max_consecutive_errors: Abort after this many consecutive handled errors, so a
-                dead bus cannot spin forever.
+                dead bus cannot spin forever. Note that the arm watchdog
+                (``SafetyLimits.max_consecutive_failures``, default 3) trips first on bus
+                failures and disables torque, raising :class:`WatchdogTimeout`; this cutoff
+                (default 10) is the second line of defence for errors the watchdog does not
+                see (callback bugs, a stalled leader).
             retries: Per-call bus retry override for the hot path.
 
         Returns:
