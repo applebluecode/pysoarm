@@ -161,7 +161,7 @@ def _enter_listener(prompt: str, input_fn: Callable[[str], str] = input) -> Call
     pressed = threading.Event()
 
     def listen() -> None:
-        with contextlib.suppress(EOFError, KeyboardInterrupt):
+        with contextlib.suppress(EOFError, OSError, KeyboardInterrupt):
             input_fn(prompt)
         pressed.set()
 
@@ -240,34 +240,76 @@ def record_ranges(
     return mins, maxs
 
 
+def _wait_for_middle(
+    wait_middle: Callable[[], None] | None,
+    prompt: Callable[[str], None],
+    input_fn: Callable[[str], str],
+) -> None:
+    """Block until the operator has placed every joint at mid-travel.
+
+    ``wait_middle`` is injected by callers that own the interaction (a visual console, a
+    headless test, a robot-holding fixture). Without it the library falls back to a plain
+    Enter prompt; ``EOFError``/``OSError``/``KeyboardInterrupt`` are treated as "already in
+    place" so a piped/non-interactive run still makes progress.
+    """
+    instruction = (
+        "Move every joint to the middle of its travel (raw position near 2048), "
+        "then press Enter... "
+    )
+    if wait_middle is not None:
+        prompt(instruction)
+        wait_middle()
+        return
+    with contextlib.suppress(EOFError, OSError, KeyboardInterrupt):
+        input_fn(instruction)
+
+
 def calibrate(
     bus: Bus,
     model: RobotModel,
     *,
     role: str = "follower",
+    middle: bool = True,
+    wait_middle: Callable[[], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
     full_turn: bool = False,
     prompt: Callable[[str], None] = print,
     input_fn: Callable[[str], str] = input,
     poll_s: float = 0.02,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
 ) -> Calibration:
     """Run the full calibration flow and persist the result to the motors.
 
-    Steps: torque off -> reset calibration -> half-turn homing -> record travel -> build,
-    validate and write the calibration. Joints listed in :data:`FULL_TURN_JOINTS` are
-    recorded over ``0..4095`` unless ``full_turn`` is true (LeRobot's current convention).
+    Steps: torque off -> reset calibration -> *move to mid-travel* -> half-turn homing ->
+    record travel -> build, validate and write the calibration. Joints listed in
+    :data:`FULL_TURN_JOINTS` are recorded over ``0..4095`` unless ``full_turn`` is true
+    (LeRobot's current convention).
+
+    The middle stage is what makes ``2048`` mean the mechanical middle, matching LeRobot's
+    SO calibration. It runs **before** :func:`set_half_turn_homings`, so the offsets are
+    computed from the pose the operator holds at that moment rather than from whatever pose
+    the arm happened to be in. ``middle=False`` reproduces the pre-0.1.3 behaviour (homing at
+    the current pose); the two conventions must not be mixed between arms that are later
+    teleoperated together.
 
     Args:
         bus: Open transport.
         model: Arm model.
         role: ``"follower"`` or ``"leader"``; recorded in the prompts and the returned
             calibration is identical (the mechanics are the same).
+        middle: Wait for the operator to place every joint at mid-travel before homing.
+            Defaults to ``True`` (LeRobot parity).
+        wait_middle: Injected blocking call that returns once the arm is at mid-travel. It
+            must not print or read stdin. When omitted, ``input_fn`` is used.
         should_stop: Predicate that ends travel recording; defaults to "press Enter".
         full_turn: Use the recorded range for continuous-rotation joints instead of
             forcing ``0..4095``.
         prompt: Output function for instructions.
-        input_fn: Input function for the default Enter listener.
+        input_fn: Input function for the default Enter prompts.
         poll_s: Sampling period while recording.
+        sleep: Sleep function used while recording, injectable for tests.
+        clock: Monotonic clock used for the recording timeout, injectable for tests.
 
     Returns:
         The calibration that was written to the motors.
@@ -280,6 +322,8 @@ def calibrate(
         raise ConfigurationError(f"role must be 'follower' or 'leader', got {role!r}")
     bus.disable_torque(model.motor_ids)
     reset_calibration(bus, model)
+    if middle:
+        _wait_for_middle(wait_middle, prompt, input_fn)
     set_half_turn_homings(bus, model)
     prompt(
         f"Calibrating {model.name} ({role}): keep every joint loose, then move each one "
@@ -293,6 +337,8 @@ def calibrate(
         require_motion=False,
         prompt="Move every joint through its full travel, then press Enter... ",
         input_fn=input_fn,
+        sleep=sleep,
+        clock=clock,
     )
     if not full_turn:
         still = [

@@ -263,6 +263,88 @@ def test_calibrate_full_turn_uses_the_recorded_range(bus: FakeBus) -> None:
     assert calibration.for_joint("wrist_roll").range_max == 3000
 
 
+def test_calibrate_middle_stage_homes_at_the_middle_pose(bus: FakeBus) -> None:
+    """L10: 2048 means mechanical middle, not whatever pose the arm was in."""
+    middle_ticks = 2500
+
+    def move_to_middle() -> None:
+        for mid in bus.motor_ids:
+            bus.set_register(mid, "present_position", middle_ticks)
+
+    calibration = calibrate(
+        bus,
+        SO101,
+        wait_middle=move_to_middle,
+        should_stop=_moving_stop(bus, [1000, 1200, 2000, 3000]),
+        input_fn=lambda prompt: pytest.fail("stdin must not be used when wait_middle is injected"),
+        prompt=lambda message: None,
+        sleep=lambda _seconds: None,
+    )
+    for joint in SO101.joints:
+        assert calibration.for_joint(joint).homing_offset == middle_ticks - 2047
+    assert bus.get_register(1, "homing_offset") == middle_ticks - 2047
+
+
+def test_calibrate_no_middle_keeps_the_pre_0_1_3_behaviour(bus: FakeBus) -> None:
+    current_ticks = 1500
+    for mid in bus.motor_ids:
+        bus.set_register(mid, "present_position", current_ticks)
+
+    def must_not_wait() -> None:
+        pytest.fail("wait_middle must be ignored when middle=False")
+
+    calibration = calibrate(
+        bus,
+        SO101,
+        middle=False,
+        wait_middle=must_not_wait,
+        should_stop=_moving_stop(bus, [1000, 1200, 2000, 3000]),
+        input_fn=lambda prompt: "",
+        prompt=lambda message: None,
+        sleep=lambda _seconds: None,
+    )
+    for joint in SO101.joints:
+        assert calibration.for_joint(joint).homing_offset == current_ticks - 2047
+
+
+def test_calibrate_middle_prompts_before_homing(bus: FakeBus) -> None:
+    prompts: list[str] = []
+
+    def record_input(text: str) -> str:
+        prompts.append(text)
+        return ""
+
+    calibrate(
+        bus,
+        SO101,
+        middle=True,
+        should_stop=_moving_stop(bus, [1000, 1200, 2000, 3000]),
+        input_fn=record_input,
+        prompt=lambda message: None,
+        sleep=lambda _seconds: None,
+    )
+    assert len(prompts) == 1
+    assert "middle" in prompts[0].lower()
+
+
+def test_calibrate_middle_survives_an_unavailable_stdin(bus: FakeBus) -> None:
+    """A piped/CI run (no TTY) must not crash in the middle prompt."""
+
+    def broken_input(prompt: str) -> str:
+        raise OSError("pytest: reading from stdin is captured")
+
+    calibration = calibrate(
+        bus,
+        SO101,
+        should_stop=_moving_stop(bus, [1000, 1200, 2000, 3000]),
+        input_fn=broken_input,
+        prompt=lambda message: None,
+        sleep=lambda _seconds: None,
+    )
+    # No answer means "the arm is already where it is": pre-0.1.3 pose, no crash.
+    assert calibration.for_joint("shoulder_pan").homing_offset == 2048 - 2047
+
+
 def test_calibrate_rejects_an_unknown_role(bus: FakeBus) -> None:
     with pytest.raises(ConfigurationError, match="role must be"):
         calibrate(bus, SO101, role="observer")

@@ -23,6 +23,7 @@ def _cmd_calibrate(args: argparse.Namespace) -> int:
             bus,
             model,
             role=args.role,
+            middle=args.middle,
             full_turn=args.full_turn,
             input_fn=lambda prompt: input(prompt) if sys.stdin.isatty() else "",
         )

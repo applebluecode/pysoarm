@@ -1,6 +1,6 @@
 # Quickstart
 
-!!! note "Version 0.1.2"
+!!! note "Version 0.1.3"
     The snippets below describe the current API and are kept in sync with `arm.py`.
 
 ## Calibrate a fresh arm
@@ -11,9 +11,14 @@ $ pysoarm calibration show --port /dev/ttyACM0
 $ pysoarm calibration export --port /dev/ttyACM0 --output my_follower.json
 ```
 
-The flow disables torque, resets the motor-side calibration, sets half-turn homings
-(`homing_offset = position - 2047`), records each joint's travel while you move it, then
-writes the result back. `wrist_roll` is recorded over `0..4095` unless `--full-turn` is used.
+The flow disables torque, resets the motor-side calibration, prompts you to move every joint
+to the middle of its travel, sets half-turn homings (`homing_offset = position - 2047`) at
+that pose, records each joint's travel while you move it, then writes the result back.
+`wrist_roll` is recorded over `0..4095` unless `--full-turn` is used. Pass `--no-middle` only
+for automated fixtures: it homes at the current pose (the 0.1.2 behaviour) and produces a
+different `q_deg` zero point, which must not be mixed with LeRobot-calibrated arms. See
+[Homing and calibration offsets](../hardware.md#homing-and-calibration-offsets) for what
+`homing_offset` actually means.
 
 ## Leader (read-only) arm
 

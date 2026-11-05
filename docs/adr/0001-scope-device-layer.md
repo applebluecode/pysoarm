@@ -89,6 +89,30 @@ Replay is supported as a *primitive*, not a format: `ResampledTrajectory` replay
 | Bundle a minimal recorder (npz/hdf5, no video) in core | Reasonable as a *separate* package (`pysoarm-collect`); in core it still adds filesystem/format policy to a driver |
 | Add `pysoarm[teleop]` extra | Worth doing only when someone needs teleoperation *without* LeRobot; the seam is now documented, so it can be added without breaking the layer rule |
 
+## Addendum — calibration is device initialisation (0.1.3)
+
+The original table classifies calibration itself as a device fact, but the 0.1.2 motor-side
+flow made the boundary of the *procedure* explicit. `calibrate()` stays in the library
+because it is the same kind of capability as `Gripper.homing()`: a single-device
+initialisation step that defines the unit used by every later command. The library owns the
+register semantics and their order (reset → mid-travel → half-turn homing → record travel →
+write).
+
+Everything that needs a human, a terminal or a file policy remains injectable or outside the
+function:
+
+- `wait_middle` / `should_stop` / `sleep` / `clock` / `prompt` / `input_fn` are parameters;
+  the library never assumes a TTY.
+- Terminal rendering, progress bars and TTY refresh belong to examples/CLI wrappers.
+- JSON naming, backups and rollback belong to `write_calibration` plus user scripts; they are
+  not part of `calibrate()`.
+- Retrying or recovering a failed calibration is an operational policy owned by the caller.
+
+The library therefore promises a deterministic flow for given I/O and physical facts, not an
+out-of-the-box interactive experience. The default `middle=True` matches LeRobot's SO
+calibration so that `2048` means the mechanical middle; `middle=False` is the explicit legacy
+convention and the two must not be mixed between arms that are teleoperated together.
+
 ## References
 
 - LeRobot dataset format v3.0 (upstream, evolves independently)

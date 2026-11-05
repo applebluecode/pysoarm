@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [0.1.3] - 2026-11-05
+
+Calibration convention fix and boundary clarification (L10 + `PYSOARM_IMPROVEMENTS.md` §12).
+
+### Added
+
+- **LeRobot-style middle stage in `calibrate()`** (L10). `calibrate(..., middle=True)` now
+  prompts and waits for every joint to be placed at mid-travel *before*
+  `set_half_turn_homings()`, so `2048` means the mechanical middle instead of whatever pose
+  the arm happened to be in. This matches LeRobot's SO calibration and prevents a `q_deg`
+  zero offset (and asymmetric travel) when one arm was calibrated with LeRobot.
+  `middle=False` preserves the pre-0.1.3 behaviour; the two conventions must not be mixed
+  between arms that are teleoperated together.
+- **`wait_middle` injection point**. `calibrate(wait_middle=...)` lets a visual console, a
+  headless test or a holding fixture block until the arm is in place without reading stdin.
+  `sleep` and `clock` are forwarded to `record_ranges()` for the same reason, so the whole
+  flow runs without a TTY.
+- **CLI switch** `pysoarm calibrate --no-middle` for automated fixtures (legacy homing pose),
+  documented in the help text.
+- **ADR addendum**: calibration is device initialisation, but interaction, file layout and
+  recovery policy stay outside `calibrate()`.
+- **Docs**: the calibration order, the `2048` convention and the warning about mixing
+  conventions are in `docs/reference/api.md`, the quickstart, and the new “Homing and
+  calibration offsets” section of `docs/hardware.md`.
+
+### Tests
+
+- New offline cases: the middle pose determines the homing offset, `middle=False` homes at
+  the current pose, injected `wait_middle` needs no stdin, the default prompt is emitted, and
+  the CLI exposes/forwards `--no-middle` (311 offline tests total).
+
 ## [0.1.2] - 2026-11-05
 
 Follow-up to the 0.1.1 hardware re-test (`PYSOARM_IMPROVEMENTS.md` §11, items L1–L9):

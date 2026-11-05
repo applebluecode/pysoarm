@@ -93,6 +93,15 @@ def _add_calibration_commands(sub: argparse._SubParsersAction[argparse.ArgumentP
     calibrate_cmd.add_argument("--id", default=None, help="default output name (id.json)")
     calibrate_cmd.add_argument("--output", default=None, help="also write this JSON file")
     calibrate_cmd.add_argument(
+        "--no-middle",
+        dest="middle",
+        action="store_false",
+        help=(
+            "skip the LeRobot-style 'move to mid-travel' stage and home at the current "
+            "pose (pre-0.1.3 behaviour)"
+        ),
+    )
+    calibrate_cmd.add_argument(
         "--full-turn",
         action="store_true",
         help="use the recorded range for wrist_roll instead of forcing 0..4095",

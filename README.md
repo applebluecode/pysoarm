@@ -14,7 +14,7 @@ no training stack. It targets the ergonomics of `pylibfranka` / `pyAgxArm`
 (`connect()` → `read_once()` → `write_goal()` / control loop) within what position-servo
 hardware can actually do.
 
-> **Status: 0.1.2.** Bus transport (SCS over `pyserial` and the optional `rustypot` backend),
+> **Status: 0.1.3.** Bus transport (SCS over `pyserial` and the optional `rustypot` backend),
 > calibration (including the motor-side flow and `pysoarm calibrate`), safety guards,
 > trajectories, Cartesian kinematics, the `SOArm` device object with follower/leader roles,
 > structured diagnostics, the `ArmBridge`/ROS 2 adapter and the CLI are implemented and
@@ -204,7 +204,7 @@ PYSOARM_HARDWARE_PORT=/dev/ttyACM0 pytest -m hardware
 ## Publishing
 
 1. bump `version` in `pyproject.toml` and `CHANGELOG.md`;
-2. `git tag v0.1.2 && git push --tags`;
+2. `git tag v0.1.3 && git push --tags`;
 3. the `release.yml` workflow builds, runs `twine check`, and publishes to PyPI via
    **trusted publishing** (OIDC, no API token stored).
 

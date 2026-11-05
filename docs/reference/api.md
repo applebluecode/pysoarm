@@ -1,6 +1,6 @@
 # API reference
 
-Complete reference for the public API of `pysoarm` **0.1.2**. Every symbol documented here is
+Complete reference for the public API of `pysoarm` **0.1.3**. Every symbol documented here is
 importable from the top-level package:
 
 ```python
@@ -236,7 +236,16 @@ The motor-side flow is public in `pysoarm.calibration`:
 | `reset_calibration(bus, model)` | clear offsets, widen travel to `0..4095` |
 | `set_half_turn_homings(bus, model)` | Feetech `offset = position - 2047` |
 | `record_ranges(bus, model, stop=...)` | poll travel while the operator moves the arm |
-| `calibrate(bus, model, role=..., full_turn=...)` | the full flow above |
+| `calibrate(bus, model, role=..., middle=True, wait_middle=...)` | the full flow above |
+
+`calibrate()` runs torque off → reset → **move to mid-travel** → half-turn homing → record
+travel → write. The middle stage is on by default to match LeRobot's SO calibration: `2048`
+then means the mechanical middle, and `wait_middle` is the injection point for an interactive
+console or a headless fixture (it must only block, not read stdin). `middle=False` reproduces
+the 0.1.2 behaviour (homing at the current pose); `pysoarm calibrate --no-middle` exposes the
+same switch. Do not mix the two conventions across arms that are later teleoperated together:
+their `q_deg` zero would differ. See [Homing and calibration offsets](../hardware.md#homing-and-calibration-offsets)
+for the register semantics.
 
 ::: pysoarm.calibration
 

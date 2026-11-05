@@ -11,6 +11,7 @@ import pytest
 from pysoarm.arm import SOArm
 from pysoarm.bus.fake import FakeBus
 from pysoarm.cli import factories
+from pysoarm.cli.commands import calibration as calibration_commands
 from pysoarm.cli.commands import diagnostics
 from pysoarm.cli.commands import kinematics as kinematics_commands
 from pysoarm.cli.main import EXIT_ERROR, EXIT_USAGE, build_parser, main
@@ -333,6 +334,34 @@ def test_calibration_export_needs_an_output(
     monkeypatch.setattr(factories, "make_bus", lambda args: bus)
     assert main(["calibration", "export", "--port", "/dev/fake"]) == EXIT_USAGE
     assert "--output" in capsys.readouterr().err
+
+
+class _EmptyCalibration:
+    def __init__(self) -> None:
+        self.joints: dict[str, object] = {}
+
+
+def test_calibrate_forwards_the_middle_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    bus = ready_bus()
+    monkeypatch.setattr(factories, "make_bus", lambda args: bus)
+    calls: dict[str, object] = {}
+
+    def fake_calibrate(bus: FakeBus, model: object, **kwargs: object) -> _EmptyCalibration:
+        calls.update(kwargs)
+        return _EmptyCalibration()
+
+    monkeypatch.setattr(calibration_commands, "calibrate", fake_calibrate)
+    assert main(["calibrate", "--port", "/dev/fake"]) == 0
+    assert calls["middle"] is True
+    assert main(["calibrate", "--port", "/dev/fake", "--no-middle"]) == 0
+    assert calls["middle"] is False
+
+
+def test_calibrate_help_documents_no_middle(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        main(["calibrate", "--help"])
+    assert excinfo.value.code == 0
+    assert "--no-middle" in capsys.readouterr().out
 
 
 def test_bench_reports_read_write_and_loop(

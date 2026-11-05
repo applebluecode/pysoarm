@@ -67,6 +67,42 @@ response  FF FF  ID  LEN  ERROR  [DATA...]    CHECKSUM
 | `Phase` | 18 | 1 | unsigned (bit 4 must be clear) |
 | `Max_Torque_Limit` / `Protection_Current` / `Overload_Torque` | 16 / 28 / 36 | 2/2/1 | gripper caps |
 
+## Homing and calibration offsets
+
+The STS3215 is an **absolute** single-turn encoder: it knows its tick position (0–4095) as soon
+as it is powered, so there is no “spin until the index is found” homing move. What is recorded
+is the relation between a tick and the joint's physical zero:
+
+```text
+homing_offset = present_position - 2047
+```
+
+After that offset is written, the servo reports `position - homing_offset`, i.e. Feetech
+subtracts the offset. The value therefore decides **which physical pose is 0°**. The 11-bit
+sign-magnitude `Homing_Offset` register cannot represent `2048`, so `2047` is the canonical
+half-turn value; a servo sitting at 4095 is clamped to `+2047`.
+
+The conversion only makes sense together with the recorded travel (`Min/Max_Position_Limit`):
+`homing_offset` fixes the zero, while `range_min`/`range_max` keep commands inside the
+mechanical travel. Both are written by `calibrate()`.
+
+### Why `calibrate()` asks for mid-travel
+
+A joint only turns through part of the encoder's 360° range, so the operator must choose which
+pose should correspond to tick 2047:
+
+| Convention | Pose used for `homing_offset` | Result |
+|---|---|---|
+| LeRobot / pysoarm ≥ 0.1.3 (`middle=True`) | every joint held at **mid-travel** | 2047 is the mechanical middle; travel is symmetric and `q_deg` matches LeRobot |
+| pre-0.1.3 (`middle=False`, `--no-middle`) | whatever pose the arm happened to be in | arbitrary `q_deg` zero, possibly asymmetric or touching 0/4095 |
+
+The two conventions must not be mixed between arms that are teleoperated together: the same
+physical pose would map to two different `q_deg` values. `wait_middle` is the injection point
+for a console, a fixture or a headless test; it only blocks and never reads stdin.
+
+`Gripper.homing()` is a different operation: it redefines the closed end of the gripper travel
+but does not change `homing_offset`, so the gripper's zero stays where it was.
+
 ## Precision, deadband and drift
 
 The STS3215 is a 12-bit single-turn servo with an internal position PID, so the software sees
