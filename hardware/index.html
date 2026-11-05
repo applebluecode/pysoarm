@@ -547,6 +547,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#homing-and-calibration-offsets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Homing and calibration offsets
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Homing and calibration offsets">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-calibrate-asks-for-mid-travel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why calibrate() asks for mid-travel
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#precision-deadband-and-drift" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -971,6 +999,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#homing-and-calibration-offsets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Homing and calibration offsets
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Homing and calibration offsets">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-calibrate-asks-for-mid-travel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why calibrate() asks for mid-travel
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#precision-deadband-and-drift" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1242,6 +1298,48 @@ response  FF FF  ID  LEN  ERROR  [DATA...]    CHECKSUM
 </tr>
 </tbody>
 </table>
+<h2 id="homing-and-calibration-offsets">Homing and calibration offsets<a class="headerlink" href="#homing-and-calibration-offsets" title="Permanent link">&para;</a></h2>
+<p>The STS3215 is an <strong>absolute</strong> single-turn encoder: it knows its tick position (0–4095) as soon
+as it is powered, so there is no “spin until the index is found” homing move. What is recorded
+is the relation between a tick and the joint's physical zero:</p>
+<div class="highlight"><pre><span></span><code>homing_offset = present_position - 2047
+</code></pre></div>
+<p>After that offset is written, the servo reports <code>position - homing_offset</code>, i.e. Feetech
+subtracts the offset. The value therefore decides <strong>which physical pose is 0°</strong>. The 11-bit
+sign-magnitude <code>Homing_Offset</code> register cannot represent <code>2048</code>, so <code>2047</code> is the canonical
+half-turn value; a servo sitting at 4095 is clamped to <code>+2047</code>.</p>
+<p>The conversion only makes sense together with the recorded travel (<code>Min/Max_Position_Limit</code>):
+<code>homing_offset</code> fixes the zero, while <code>range_min</code>/<code>range_max</code> keep commands inside the
+mechanical travel. Both are written by <code>calibrate()</code>.</p>
+<h3 id="why-calibrate-asks-for-mid-travel">Why <code>calibrate()</code> asks for mid-travel<a class="headerlink" href="#why-calibrate-asks-for-mid-travel" title="Permanent link">&para;</a></h3>
+<p>A joint only turns through part of the encoder's 360° range, so the operator must choose which
+pose should correspond to tick 2047:</p>
+<table>
+<thead>
+<tr>
+<th>Convention</th>
+<th>Pose used for <code>homing_offset</code></th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>LeRobot / pysoarm ≥ 0.1.3 (<code>middle=True</code>)</td>
+<td>every joint held at <strong>mid-travel</strong></td>
+<td>2047 is the mechanical middle; travel is symmetric and <code>q_deg</code> matches LeRobot</td>
+</tr>
+<tr>
+<td>pre-0.1.3 (<code>middle=False</code>, <code>--no-middle</code>)</td>
+<td>whatever pose the arm happened to be in</td>
+<td>arbitrary <code>q_deg</code> zero, possibly asymmetric or touching 0/4095</td>
+</tr>
+</tbody>
+</table>
+<p>The two conventions must not be mixed between arms that are teleoperated together: the same
+physical pose would map to two different <code>q_deg</code> values. <code>wait_middle</code> is the injection point
+for a console, a fixture or a headless test; it only blocks and never reads stdin.</p>
+<p><code>Gripper.homing()</code> is a different operation: it redefines the closed end of the gripper travel
+but does not change <code>homing_offset</code>, so the gripper's zero stays where it was.</p>
 <h2 id="precision-deadband-and-drift">Precision, deadband and drift<a class="headerlink" href="#precision-deadband-and-drift" title="Permanent link">&para;</a></h2>
 <p>The STS3215 is a 12-bit single-turn servo with an internal position PID, so the software sees
 three limits that are easy to mistake for bugs:</p>

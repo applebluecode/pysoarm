@@ -7033,7 +7033,7 @@
 
 
 <h1 id="api-reference">API reference<a class="headerlink" href="#api-reference" title="Permanent link">&para;</a></h1>
-<p>Complete reference for the public API of <code>pysoarm</code> <strong>0.1.2</strong>. Every symbol documented here is
+<p>Complete reference for the public API of <code>pysoarm</code> <strong>0.1.3</strong>. Every symbol documented here is
 importable from the top-level package:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pysoarm</span><span class="w"> </span><span class="kn">import</span> <span class="n">SOArm</span><span class="p">,</span> <span class="n">ArmState</span><span class="p">,</span> <span class="n">Calibration</span><span class="p">,</span> <span class="n">SafetyLimits</span><span class="p">,</span> <span class="n">Pose</span>
 </code></pre></div>
@@ -11353,11 +11353,19 @@ ids raise <code>CalibrationError</code> <strong>before</strong> any motor is com
 <td>poll travel while the operator moves the arm</td>
 </tr>
 <tr>
-<td><code>calibrate(bus, model, role=..., full_turn=...)</code></td>
+<td><code>calibrate(bus, model, role=..., middle=True, wait_middle=...)</code></td>
 <td>the full flow above</td>
 </tr>
 </tbody>
 </table>
+<p><code>calibrate()</code> runs torque off → reset → <strong>move to mid-travel</strong> → half-turn homing → record
+travel → write. The middle stage is on by default to match LeRobot's SO calibration: <code>2048</code>
+then means the mechanical middle, and <code>wait_middle</code> is the injection point for an interactive
+console or a headless fixture (it must only block, not read stdin). <code>middle=False</code> reproduces
+the 0.1.2 behaviour (homing at the current pose); <code>pysoarm calibrate --no-middle</code> exposes the
+same switch. Do not mix the two conventions across arms that are later teleoperated together:
+their <code>q_deg</code> zero would differ. See <a href="../../hardware/#homing-and-calibration-offsets">Homing and calibration offsets</a>
+for the register semantics.</p>
 
 
 <div class="doc doc-object doc-module">
@@ -12144,20 +12152,31 @@ homing offset does not fit the servo's 11-bit sign-magnitude register.</p>
     <span class="n">model</span><span class="p">,</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">role</span><span class="o">=</span><span class="s2">"follower"</span><span class="p">,</span>
+    <span class="n">middle</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">wait_middle</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
     <span class="n">should_stop</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
     <span class="n">full_turn</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
     <span class="n">prompt</span><span class="o">=</span><span class="nb">print</span><span class="p">,</span>
     <span class="n">input_fn</span><span class="o">=</span><span class="nb">input</span><span class="p">,</span>
     <span class="n">poll_s</span><span class="o">=</span><span class="mf">0.02</span><span class="p">,</span>
+    <span class="n">sleep</span><span class="o">=</span><span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">,</span>
+    <span class="n">clock</span><span class="o">=</span><span class="n">time</span><span class="o">.</span><span class="n">monotonic</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
 
         <p>Run the full calibration flow and persist the result to the motors.</p>
-<p>Steps: torque off -&gt; reset calibration -&gt; half-turn homing -&gt; record travel -&gt; build,
-validate and write the calibration. Joints listed in :data:<code>FULL_TURN_JOINTS</code> are
-recorded over <code>0..4095</code> unless <code>full_turn</code> is true (LeRobot's current convention).</p>
+<p>Steps: torque off -&gt; reset calibration -&gt; <em>move to mid-travel</em> -&gt; half-turn homing -&gt;
+record travel -&gt; build, validate and write the calibration. Joints listed in
+:data:<code>FULL_TURN_JOINTS</code> are recorded over <code>0..4095</code> unless <code>full_turn</code> is true
+(LeRobot's current convention).</p>
+<p>The middle stage is what makes <code>2048</code> mean the mechanical middle, matching LeRobot's
+SO calibration. It runs <strong>before</strong> :func:<code>set_half_turn_homings</code>, so the offsets are
+computed from the pose the operator holds at that moment rather than from whatever pose
+the arm happened to be in. <code>middle=False</code> reproduces the pre-0.1.3 behaviour (homing at
+the current pose); the two conventions must not be mixed between arms that are later
+teleoperated together.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -12227,6 +12246,40 @@ calibration is identical (the mechanics are the same).</p>
           </tr>
           <tr class="doc-section-item">
             <td>
+                <code>middle</code>
+            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Wait for the operator to place every joint at mid-travel before homing.
+Defaults to <code>True</code> (LeRobot parity).</p>
+              </div>
+            </td>
+            <td>
+                  <code>True</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>wait_middle</code>
+            </td>
+            <td>
+                  <code><span title="collections.abc.Callable">Callable</span>[[], None] | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Injected blocking call that returns once the arm is at mid-travel. It
+must not print or read stdin. When omitted, <code>input_fn</code> is used.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
                 <code>should_stop</code>
             </td>
             <td>
@@ -12283,7 +12336,7 @@ forcing <code>0..4095</code>.</p>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Input function for the default Enter listener.</p>
+                <p>Input function for the default Enter prompts.</p>
               </div>
             </td>
             <td>
@@ -12304,6 +12357,38 @@ forcing <code>0..4095</code>.</p>
             </td>
             <td>
                   <code>0.02</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>sleep</code>
+            </td>
+            <td>
+                  <code><span title="collections.abc.Callable">Callable</span>[[<span title="float">float</span>], None]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Sleep function used while recording, injectable for tests.</p>
+              </div>
+            </td>
+            <td>
+                  <code><span title="time.sleep">sleep</span></code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>clock</code>
+            </td>
+            <td>
+                  <code><span title="collections.abc.Callable">Callable</span>[[], <span title="float">float</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Monotonic clock used for the recording timeout, injectable for tests.</p>
+              </div>
+            </td>
+            <td>
+                  <code><span title="time.monotonic">monotonic</span></code>
             </td>
           </tr>
       </tbody>
