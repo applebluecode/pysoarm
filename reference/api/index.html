@@ -10271,7 +10271,9 @@ resulting joint goal still passes every safety guard through :meth:<code>write_g
         <p>Run a fixed-rate control loop.</p>
 <p>Each tick: read a state, call <code>callback(state, elapsed_s)</code>, write the returned goal
 (<code>None</code> means "hold, send nothing"). Deadlines are absolute, so jitter does not
-accumulate; overruns are counted instead of silently shortening the period.</p>
+accumulate; overruns are counted instead of silently shortening the period. The
+timing and error policy live in :mod:<code>pysoarm.loop</code>; this method binds them to the
+arm's reads, writes, clock and sleep.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -10379,7 +10381,7 @@ hot path. A float re-enables it through the arm's round-robin refresh.</p>
                 <code>on_error</code>
             </td>
             <td>
-                  <code><span title="pysoarm.arm.ErrorPolicy">ErrorPolicy</span></code>
+                  <code><span title="pysoarm.loop.ErrorPolicy">ErrorPolicy</span></code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -10445,7 +10447,7 @@ dead bus cannot spin forever.</p>
 
   
       dataclass
-   (pysoarm.arm.LoopStats)" href="#pysoarm.arm.LoopStats">LoopStats</a></code>
+   (pysoarm.loop.LoopStats)" href="#pysoarm.arm.LoopStats">LoopStats</a></code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -11128,23 +11130,13 @@ ids raise <code>CalibrationError</code> <strong>before</strong> any motor is com
 
     <div class="doc doc-contents first">
 
-        <p>Calibration: homing offsets, joint ranges and the degrees &lt;-&gt; tick conversion.</p>
-<p>The on-disk format is intentionally LeRobot-compatible, so an arm that was already calibrated
-by LeRobot can be driven by pysoarm without re-calibration::</p>
-<div class="highlight"><pre><span></span><code>{
-  "shoulder_pan": {"id": 1, "drive_mode": 0, "homing_offset": -1902,
-                   "range_min": 732, "range_max": 3380},
-  ...
-}
+        <p>Calibration: data model and the motor-side calibration flow.</p>
+<p>The public names are unchanged from the former single-module layout:</p>
+<p>.. code-block:: python</p>
+<div class="highlight"><pre><span></span><code>from pysoarm.calibration import Calibration, calibrate, read_calibration
 </code></pre></div>
-<p>Conversions (the STS3215 has 4096 ticks per turn, so 4095 is the largest representable raw
-value)::</p>
-<div class="highlight"><pre><span></span><code>raw   = round(q_deg * 4095 / 360 + (range_min + range_max) / 2)
-q_deg = (raw - (range_min + range_max) / 2) * 360 / 4095
-</code></pre></div>
-<p><code>drive_mode == 1</code> marks a mirrored mounting: the sign is flipped in both directions. LeRobot
-ignores <code>drive_mode</code> in degrees mode; pysoarm applies it, because a mirrored joint that is
-not flipped moves the wrong way. All SO-101 factory calibrations use <code>drive_mode = 0</code>.</p>
+<p>:mod:<code>pysoarm.calibration.model</code> owns the data and conversions;
+:mod:<code>pysoarm.calibration.flow</code> owns the bus procedure.</p>
 
 
 
@@ -11209,7 +11201,7 @@ not flipped moves the wrong way. All SO-101 factory calibrations use <code>drive
 
   
       dataclass
-   (pysoarm.calibration.JointCalibration)" href="#pysoarm.calibration.JointCalibration">JointCalibration</a>]</code>
+   (pysoarm.calibration.model.JointCalibration)" href="#pysoarm.calibration.JointCalibration">JointCalibration</a>]</code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -12092,7 +12084,7 @@ forcing <code>0..4095</code>.</p>
 
   
       dataclass
-   (pysoarm.calibration.Calibration)" href="#pysoarm.calibration.Calibration">Calibration</a></code>
+   (pysoarm.calibration.model.Calibration)" href="#pysoarm.calibration.Calibration">Calibration</a></code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -12229,7 +12221,7 @@ with a different value if a joint is mounted mirrored.</p>
 
   
       dataclass
-   (pysoarm.calibration.Calibration)" href="#pysoarm.calibration.Calibration">Calibration</a></code>
+   (pysoarm.calibration.model.Calibration)" href="#pysoarm.calibration.Calibration">Calibration</a></code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -12842,7 +12834,7 @@ produce the unrepresentable 2048.</p>
 
   
       dataclass
-   (pysoarm.calibration.Calibration)" href="#pysoarm.calibration.Calibration">Calibration</a></code>
+   (pysoarm.calibration.model.Calibration)" href="#pysoarm.calibration.Calibration">Calibration</a></code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -20651,9 +20643,9 @@ pysoarm calibration export --port ... --output f.json
 pysoarm bench   --port ... --seconds 5          # read/write latency and loop overruns
 pysoarm doctor  --port ... [--stress 3]         # environment + electrical self-check
 </code></pre></div>
-<p><code>doctor</code> exists because the two most common failures are environmental: another process
-(a suspended <code>lerobot-*</code>) holding the tty, and <code>ModemManager</code> probing <code>/dev/ttyACM*</code>.
-With <code>--stress</code> it also reports per-motor timeouts, status bits and voltage/temperature.</p>
+<p>The parser lives in :mod:<code>pysoarm.cli.parser</code>; command implementations live in
+:mod:<code>pysoarm.cli.commands</code>. This module only wires handlers and maps domain errors to stable
+exit codes, so adding a command does not grow a central implementation file.</p>
 
 
 
