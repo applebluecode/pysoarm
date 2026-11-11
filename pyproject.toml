@@ -85,7 +85,7 @@ docs = [
   # pymdown-extensions 12 changed Highlighter's signature and mkdocstrings 1.0.x does not
   # cope with it yet (`Highlight.__init__() missing 1 required positional argument: 'md'`),
   # so keep it below 12 until mkdocstrings supports it.
-  "pymdown-extensions>=10,<12",
+  "pymdown-extensions>=10,<13",
 ]
 # Hardware-in-the-loop: `uv sync --group hardware`
 hardware = ["pyserial>=3.5", "rustypot>=0.4"]
